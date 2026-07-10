@@ -30,47 +30,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = $_POST['password'] ?? '';
 
     if (!empty($username) && !empty($password)) {
-        // Query login SIMKES Khanza menggunakan dekripsi AES
-        $stmt = $koneksi->prepare("SELECT 
-                            user.id_user, user.password 
-                            FROM user 
-                            WHERE aes_decrypt(user.id_user, 'nur') = ? 
-                            AND aes_decrypt(user.password, 'windi') = ?");
         
+        $login_ok    = false;
+        $is_admin_login = false;
+
+        // ── Jalur 1: Cek tabel 'user' SIMKES Khanza ──────────────────────────
+        $stmt = $koneksi->prepare("SELECT id_user FROM user
+                                    WHERE aes_decrypt(id_user, 'nur') = ?
+                                    AND aes_decrypt(password, 'windi') = ?
+                                    LIMIT 1");
         if ($stmt) {
             $stmt->bind_param("ss", $username, $password);
             $stmt->execute();
             $result = $stmt->get_result();
-            
             if ($result && $result->num_rows > 0) {
-                $_SESSION['username'] = $username;
-                $_SESSION['status'] = "login";
-                
-                // Cari nama lengkap pegawai berdasarkan NIK/NIP (username)
-                $stmtPeg = $koneksi->prepare("SELECT nama FROM pegawai WHERE nik = ? LIMIT 1");
-                if ($stmtPeg) {
-                    $stmtPeg->bind_param("s", $username);
-                    $stmtPeg->execute();
-                    $resPeg = $stmtPeg->get_result();
-                    if ($resPeg && $rowPeg = $resPeg->fetch_assoc()) {
-                        $_SESSION['nama_lengkap'] = $rowPeg['nama'];
-                    } else {
-                        $_SESSION['nama_lengkap'] = $username;
-                    }
-                    $stmtPeg->close();
-                } else {
-                    $_SESSION['nama_lengkap'] = $username;
-                }
-                
-                header("Location: index.php");
-                exit;
-            } else {
-                $error = 'Username atau Password salah!';
+                $login_ok = true;
             }
             $stmt->close();
-        } else {
-            $error = 'Terjadi kesalahan sistem database!';
         }
+
+        // ── Jalur 2: Cek tabel 'admin' (admin utama sistem) ──────────────────
+        if (!$login_ok) {
+            $stmt_adm = $koneksi->prepare("SELECT usere FROM admin
+                                            WHERE aes_decrypt(usere, 'nur') = ?
+                                            AND aes_decrypt(passworde, 'windi') = ?
+                                            LIMIT 1");
+            if ($stmt_adm) {
+                $stmt_adm->bind_param("ss", $username, $password);
+                $stmt_adm->execute();
+                $res_adm = $stmt_adm->get_result();
+                if ($res_adm && $res_adm->num_rows > 0) {
+                    $login_ok       = true;
+                    $is_admin_login = true;   // login langsung dari tabel admin
+                }
+                $stmt_adm->close();
+            }
+        }
+
+        // ── Proses session jika login berhasil ────────────────────────────────
+        if ($login_ok) {
+            $_SESSION['username'] = $username;
+            $_SESSION['status']   = "login";
+
+            // Ambil nama lengkap dari tabel pegawai (mungkin tidak ada untuk admin murni)
+            $stmtPeg = $koneksi->prepare("SELECT nama FROM pegawai WHERE nik = ? LIMIT 1");
+            if ($stmtPeg) {
+                $stmtPeg->bind_param("s", $username);
+                $stmtPeg->execute();
+                $resPeg = $stmtPeg->get_result();
+                if ($resPeg && $rowPeg = $resPeg->fetch_assoc()) {
+                    $_SESSION['nama_lengkap'] = $rowPeg['nama'];
+                } else {
+                    $_SESSION['nama_lengkap'] = strtoupper($username); // fallback: pakai username
+                }
+                $stmtPeg->close();
+            } else {
+                $_SESSION['nama_lengkap'] = strtoupper($username);
+            }
+
+            // Tentukan status admin:
+            // → admin jika login dari jalur 2, ATAU jika NIK-nya ada di tabel admin
+            if ($is_admin_login) {
+                $_SESSION['is_admin'] = true;
+            } else {
+                $_SESSION['is_admin'] = false;
+                $stmt_chk = $koneksi->prepare("SELECT usere FROM admin WHERE aes_decrypt(usere, 'nur') = ? LIMIT 1");
+                if ($stmt_chk) {
+                    $stmt_chk->bind_param("s", $username);
+                    $stmt_chk->execute();
+                    $res_chk = $stmt_chk->get_result();
+                    if ($res_chk && $res_chk->num_rows > 0) {
+                        $_SESSION['is_admin'] = true;
+                    }
+                    $stmt_chk->close();
+                }
+            }
+
+            header("Location: index.php");
+            exit;
+
+        } else {
+            $error = 'Username atau Password salah!';
+        }
+
     } else {
         $error = 'Silakan isi semua bidang!';
     }

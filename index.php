@@ -25,37 +25,55 @@ if ($result_instansi && $row_instansi = mysqli_fetch_assoc($result_instansi)) {
 }
 
 // Fetch page permissions for the logged-in user from hak_akses
+// Admin utama selalu mendapat akses penuh ke semua menu tanpa perlu cek tabel hak_akses
+$all_permissions = [
+    'dashboard' => '1',
+    'manajemen' => '1',
+    'dokter'    => '1',
+    'pegawai'   => '1',
+    'kasir'     => '1',
+    'keuangan'  => '1'
+];
+
 $user_permissions = [
     'dashboard' => '1',
     'manajemen' => '0',
-    'dokter' => '0',
-    'pegawai' => '0'
+    'dokter'    => '0',
+    'pegawai'   => '0',
+    'kasir'     => '0',
+    'keuangan'  => '0'
 ];
 
 $nik_logged = $_SESSION['username'];
-$stmt_akses = $koneksi->prepare("SELECT dashboard, manajemen, dokter, pegawai FROM hak_akses WHERE nik = ?");
-if ($stmt_akses) {
-    $stmt_akses->bind_param("s", $nik_logged);
-    $stmt_akses->execute();
-    $res_akses = $stmt_akses->get_result();
-    if ($res_akses && $row_akses = $res_akses->fetch_assoc()) {
-        $user_permissions = $row_akses;
-    } else {
-        // Automatically initialize default permissions in database if not exist
-        $stmt_init = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai) VALUES (?, '1', '0', '0', '0')");
-        if ($stmt_init) {
-            $stmt_init->bind_param("s", $nik_logged);
-            $stmt_init->execute();
-            $stmt_init->close();
+
+if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true) {
+    // Admin utama → akses penuh, tidak perlu query hak_akses
+    $user_permissions = $all_permissions;
+} else {
+    $stmt_akses = $koneksi->prepare("SELECT dashboard, manajemen, dokter, pegawai, kasir, keuangan FROM hak_akses WHERE nik = ?");
+    if ($stmt_akses) {
+        $stmt_akses->bind_param("s", $nik_logged);
+        $stmt_akses->execute();
+        $res_akses = $stmt_akses->get_result();
+        if ($res_akses && $row_akses = $res_akses->fetch_assoc()) {
+            $user_permissions = $row_akses;
+        } else {
+            // Otomatis inisialisasi hak akses default jika belum ada
+            $stmt_init = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan) VALUES (?, '1', '0', '0', '0', '0', '0')");
+            if ($stmt_init) {
+                $stmt_init->bind_param("s", $nik_logged);
+                $stmt_init->execute();
+                $stmt_init->close();
+            }
         }
+        $stmt_akses->close();
     }
-    $stmt_akses->close();
 }
 
 // Router Page Configuration
 $page = isset($_GET['page']) ? $_GET['page'] : 'dashboard';
 $sub = isset($_GET['sub']) ? $_GET['sub'] : '';
-$allowed_pages = ['dashboard', 'manajemen', 'dokter', 'pegawai'];
+$allowed_pages = ['dashboard', 'manajemen', 'dokter', 'pegawai', 'kasir', 'keuangan'];
 
 if (!in_array($page, $allowed_pages)) {
     $page = 'dashboard';
@@ -255,6 +273,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <a href="index.php?page=manajemen&sub=dokter" class="<?= ($page === 'manajemen' && $sub === 'dokter') ? 'active' : '' ?>">
                         <span>• Data Dokter</span>
                     </a>
+                    <a href="index.php?page=manajemen&sub=mapping_atasan" class="<?= ($page === 'manajemen' && $sub === 'mapping_atasan') ? 'active' : '' ?>">
+                        <span>• Mapping Atasan</span>
+                    </a>
+                    <?php if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true): ?>
+                    <a href="index.php?page=manajemen&sub=user" class="<?= ($page === 'manajemen' && $sub === 'user') ? 'active' : '' ?>" style="color: #f59e0b !important;">
+                        <span>🔑 Manajemen User</span>
+                    </a>
+                    <?php endif; ?>
                 </div>
             </div>
             <?php endif; ?>
@@ -292,6 +318,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             </div>
             <?php endif; ?>
+
+            <?php if (isset($user_permissions['kasir']) && $user_permissions['kasir'] === '1'): ?>
+            <div class="menu-group <?= $page === 'kasir' ? 'active' : '' ?>">
+                <div class="menu-group-header">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                    <span>Kasir</span>
+                </div>
+                <div class="menu-group-items">
+                    <a href="index.php?page=kasir&sub=payment_point" class="<?= ($page === 'kasir' && ($sub === 'payment_point' || empty($sub))) ? 'active' : '' ?>">
+                        <span>• Payment Point</span>
+                    </a>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <?php if (isset($user_permissions['keuangan']) && $user_permissions['keuangan'] === '1'): ?>
+            <div class="menu-group <?= $page === 'keuangan' ? 'active' : '' ?>">
+                <div class="menu-group-header">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    <span>Keuangan</span>
+                </div>
+                <div class="menu-group-items">
+                    <a href="index.php?page=keuangan&sub=ppnobat" class="<?= ($page === 'keuangan' && ($sub === 'ppnobat' || empty($sub))) ? 'active' : '' ?>">
+                        <span>• PPN Obat Pasien Ralan</span>
+                    </a>
+                    <a href="index.php?page=keuangan&sub=penjualan_bebas" class="<?= ($page === 'keuangan' && $sub === 'penjualan_bebas') ? 'active' : '' ?>">
+                        <span>• Penjualan Bebas</span>
+                    </a>
+                </div>
+            </div>
+            <?php endif; ?>
         </nav>
 
         <div class="sidebar-footer">
@@ -301,7 +358,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
                 <div class="user-info">
                     <div class="user-name"><?= htmlspecialchars($_SESSION['nama_lengkap'] ?? $_SESSION['username']) ?></div>
-                    <div class="user-role">Pegawai</div>
+                    <div class="user-role">
+                        <?php if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true): ?>
+                            <span style="color: #f59e0b; font-weight: 700;">★ Admin Utama</span>
+                        <?php else: ?>
+                            Pegawai
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
             <a href="logout.php" class="btn btn-danger btn-sm btn-logout" style="width: 100%; display: flex; justify-content: center;">
@@ -366,6 +429,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
                     <span>Data Dokter</span>
                 </a>
+                <?php if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true): ?>
+                <a href="index.php?page=manajemen&sub=user" class="drawer-item" onclick="closeDrawerMenu(event)" style="color: #b45309;">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                    <span>Manajemen User</span>
+                </a>
+                <?php endif; ?>
                 <?php endif; ?>
                 
                 <?php if (isset($user_permissions['dokter']) && $user_permissions['dokter'] === '1'): ?>
@@ -387,6 +456,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <a href="index.php?page=pegawai&sub=absensi" class="drawer-item" onclick="closeDrawerMenu(event)">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
                     <span>Absensi</span>
+                </a>
+                <?php endif; ?>
+                
+                <?php if (isset($user_permissions['kasir']) && $user_permissions['kasir'] === '1'): ?>
+                <a href="index.php?page=kasir&sub=payment_point" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                    <span>Payment Point</span>
+                </a>
+                <?php endif; ?>
+                
+                <?php if (isset($user_permissions['keuangan']) && $user_permissions['keuangan'] === '1'): ?>
+                <a href="index.php?page=keuangan&sub=ppnobat" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    <span>PPN Obat Ralan</span>
+                </a>
+                <a href="index.php?page=keuangan&sub=penjualan_bebas" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+                    <span>Penjualan Bebas</span>
                 </a>
                 <?php endif; ?>
                 

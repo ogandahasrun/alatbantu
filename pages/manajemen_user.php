@@ -33,19 +33,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     
                     // Initialize or copy custom hak_akses permissions
                     if (!empty($copy_from)) {
-                        $stmt_copy_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai) SELECT ?, dashboard, manajemen, dokter, pegawai FROM hak_akses WHERE nik = ?");
+                        $stmt_copy_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan) SELECT ?, dashboard, manajemen, dokter, pegawai, kasir, keuangan FROM hak_akses WHERE nik = ?");
                         if ($stmt_copy_hak) {
                             $stmt_copy_hak->bind_param("ss", $nik, $copy_from);
                             $stmt_copy_hak->execute();
                             // Fallback if source user has no record in hak_akses yet
                             if ($stmt_copy_hak->affected_rows === 0) {
-                                $koneksi->query("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai) VALUES ('$nik', '1', '0', '0', '0')");
+                                $koneksi->query("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan) VALUES ('$nik', '1', '0', '0', '0', '0', '0')");
                             }
                             $stmt_copy_hak->close();
                         }
                     } else {
                         // default permissions
-                        $koneksi->query("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai) VALUES ('$nik', '1', '0', '0', '0')");
+                        $koneksi->query("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan) VALUES ('$nik', '1', '0', '0', '0', '0', '0')");
                     }
 
                     // Copy SIMKES Khanza (1,200+) permissions if template user is selected
@@ -122,13 +122,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $nik = trim($_POST['nik'] ?? '');
         $dashboard = isset($_POST['dashboard']) ? '1' : '0';
         $manajemen = isset($_POST['manajemen']) ? '1' : '0';
-        $dokter = isset($_POST['dokter']) ? '1' : '0';
-        $pegawai = isset($_POST['pegawai']) ? '1' : '0';
+        $dokter    = isset($_POST['dokter'])    ? '1' : '0';
+        $pegawai   = isset($_POST['pegawai'])   ? '1' : '0';
+        $kasir     = isset($_POST['kasir'])     ? '1' : '0';
+        $keuangan  = isset($_POST['keuangan'])  ? '1' : '0';
 
         if (!empty($nik)) {
-            $stmt_up_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE dashboard = ?, manajemen = ?, dokter = ?, pegawai = ?");
+            $stmt_up_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE dashboard = ?, manajemen = ?, dokter = ?, pegawai = ?, kasir = ?, keuangan = ?");
             if ($stmt_up_hak) {
-                $stmt_up_hak->bind_param("sssssssss", $nik, $dashboard, $manajemen, $dokter, $pegawai, $dashboard, $manajemen, $dokter, $pegawai);
+                $stmt_up_hak->bind_param("sssssssssssss", $nik, $dashboard, $manajemen, $dokter, $pegawai, $kasir, $keuangan, $dashboard, $manajemen, $dokter, $pegawai, $kasir, $keuangan);
                 if ($stmt_up_hak->execute()) {
                     $success_msg = "Hak akses menu untuk user $nik berhasil diperbarui.";
                 } else {
@@ -149,7 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         if (!empty($nik) && !empty($copy_from)) {
             // 1. Copy custom hak_akses menu permissions
-            $stmt_copy_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai) SELECT ?, dashboard, manajemen, dokter, pegawai FROM hak_akses WHERE nik = ? ON DUPLICATE KEY UPDATE dashboard=VALUES(dashboard), manajemen=VALUES(manajemen), dokter=VALUES(dokter), pegawai=VALUES(pegawai)");
+            $stmt_copy_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan) SELECT ?, dashboard, manajemen, dokter, pegawai, kasir, keuangan FROM hak_akses WHERE nik = ? ON DUPLICATE KEY UPDATE dashboard=VALUES(dashboard), manajemen=VALUES(manajemen), dokter=VALUES(dokter), pegawai=VALUES(pegawai), kasir=VALUES(kasir), keuangan=VALUES(keuangan)");
             if ($stmt_copy_hak) {
                 $stmt_copy_hak->bind_param("ss", $nik, $copy_from);
                 $stmt_copy_hak->execute();
@@ -252,7 +254,9 @@ $query = "SELECT
             h.dashboard,
             h.manajemen,
             h.dokter,
-            h.pegawai
+            h.pegawai,
+            h.kasir,
+            h.keuangan
           FROM user u
           LEFT JOIN pegawai p ON p.nik = aes_decrypt(u.id_user, 'nur')
           LEFT JOIN hak_akses h ON h.nik = aes_decrypt(u.id_user, 'nur')";
@@ -364,6 +368,12 @@ if ($res_tpl) {
                                     <?php endif; ?>
                                     <?php if (($u['pegawai'] ?? '0') === '1'): ?>
                                         <span class="badge badge-success">Pegawai</span>
+                                    <?php endif; ?>
+                                    <?php if (($u['kasir'] ?? '0') === '1'): ?>
+                                        <span class="badge badge-success">Kasir</span>
+                                    <?php endif; ?>
+                                    <?php if (($u['keuangan'] ?? '0') === '1'): ?>
+                                        <span class="badge badge-success">Keuangan</span>
                                     <?php endif; ?>
                                 </div>
                             </td>
@@ -519,6 +529,16 @@ if ($res_tpl) {
                             <input type="checkbox" id="access_chk_pegawai" name="pegawai" value="1" style="width:18px; height:18px;">
                             <strong>Pegawai</strong> (Mengelola data pegawai rumah sakit)
                         </label>
+
+                        <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;">
+                            <input type="checkbox" id="access_chk_kasir" name="kasir" value="1" style="width:18px; height:18px;">
+                            <strong>Kasir</strong> (Akses halaman payment point kasir)
+                        </label>
+
+                        <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;">
+                            <input type="checkbox" id="access_chk_keuangan" name="keuangan" value="1" style="width:18px; height:18px;">
+                            <strong>Keuangan</strong> (Akses laporan PPN obat & penjualan bebas)
+                        </label>
                     </div>
                 </div>
             </div>
@@ -595,8 +615,10 @@ function openEditAccessModal(u) {
     
     // Set checkbox states based on user hak_akses values
     document.getElementById('access_chk_manajemen').checked = (u.manajemen === '1');
-    document.getElementById('access_chk_dokter').checked = (u.dokter === '1');
-    document.getElementById('access_chk_pegawai').checked = (u.pegawai === '1');
+    document.getElementById('access_chk_dokter').checked    = (u.dokter    === '1');
+    document.getElementById('access_chk_pegawai').checked   = (u.pegawai   === '1');
+    document.getElementById('access_chk_kasir').checked     = (u.kasir     === '1');
+    document.getElementById('access_chk_keuangan').checked  = (u.keuangan  === '1');
     
     openModal('editAccessModal');
 }
