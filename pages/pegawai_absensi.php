@@ -4,6 +4,20 @@ defined('host') or die('Akses langsung tidak diizinkan.');
 // Ambil NIK dan ID Pegawai dari Session login
 $nik = $_SESSION['username'];
 
+// Cek apakah data wajah terdaftar di face_vector
+$registered_face_vector = null;
+$stmt_fv = $koneksi->prepare("SELECT vector FROM face_vector WHERE nik = ? LIMIT 1");
+if ($stmt_fv) {
+    $stmt_fv->bind_param("s", $nik);
+    $stmt_fv->execute();
+    $res_fv = $stmt_fv->get_result();
+    if ($row_fv = $res_fv->fetch_assoc()) {
+        $registered_face_vector = $row_fv['vector'];
+    }
+    $stmt_fv->close();
+}
+$face_not_registered = ($registered_face_vector === null);
+
 // Ambil ID dan Nama Pegawai
 $query_pegawai_info = "SELECT id, nama FROM pegawai WHERE nik = ? LIMIT 1";
 $stmt_peg_info = $koneksi->prepare($query_pegawai_info);
@@ -104,45 +118,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['absen_hari_ini'])) {
         exit;
     }
 
-    // Decode base64 image data
-    if (preg_match('/^data:image\/(\w+);base64,/', $photo, $type_img)) {
-        $photo = substr($photo, strpos($photo, ',') + 1);
-        $type_img = strtolower($type_img[1]); // jpg, jpeg, png
+    $file_path = 'FACE_VERIFIED';
 
-        if (!in_array($type_img, ['jpg', 'jpeg', 'png'])) {
-            echo json_encode(['success' => false, 'message' => 'Format gambar tidak didukung! Hanya JPG/JPEG/PNG.']);
+    if ($photo !== 'FACE_VERIFIED') {
+        // Decode base64 image data (Fallback jika menggunakan absensi versi lama)
+        if (preg_match('/^data:image\/(\w+);base64,/', $photo, $type_img)) {
+            $photo = substr($photo, strpos($photo, ',') + 1);
+            $type_img = strtolower($type_img[1]); // jpg, jpeg, png
+
+            if (!in_array($type_img, ['jpg', 'jpeg', 'png'])) {
+                echo json_encode(['success' => false, 'message' => 'Format gambar tidak didukung! Hanya JPG/JPEG/PNG.']);
+                exit;
+            }
+
+            $photo_bin = base64_decode($photo);
+            if ($photo_bin === false) {
+                echo json_encode(['success' => false, 'message' => 'Dekode gambar gagal!']);
+                exit;
+            }
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Format data foto tidak valid!']);
             exit;
         }
 
-        $photo_bin = base64_decode($photo);
-        if ($photo_bin === false) {
-            echo json_encode(['success' => false, 'message' => 'Dekode gambar gagal!']);
+        // Validate size (Must be <= 50KB)
+        $file_size = strlen($photo_bin);
+        if ($file_size > 50 * 1024) { // 50 KB
+            echo json_encode(['success' => false, 'message' => 'Ukuran foto terlalu besar (' . round($file_size/1024, 1) . ' KB). Maksimal 50 KB!']);
             exit;
         }
-    } else {
-        echo json_encode(['success' => false, 'message' => 'Format data foto tidak valid!']);
-        exit;
+
+        // Ensure upload directory exists
+        $upload_dir = 'assets/uploads/absensi/';
+        if (!file_exists($upload_dir)) {
+            mkdir($upload_dir, 0777, true);
+        }
+
+        // Save photo file
+        $file_suffix = ($action_type === 'masuk') ? 'masuk' : 'pulang';
+        $file_name = $pegawai_id . '_' . $today_date . '_' . $file_suffix . '.jpg';
+        $file_path = $upload_dir . $file_name;
+
+        if (!file_put_contents($file_path, $photo_bin)) {
+            echo json_encode(['success' => false, 'message' => 'Gagal menyimpan file foto ke server.']);
+            exit;
+        }
     }
-
-    // Validate size (Must be <= 50KB)
-    $file_size = strlen($photo_bin);
-    if ($file_size > 50 * 1024) { // 50 KB
-        echo json_encode(['success' => false, 'message' => 'Ukuran foto terlalu besar (' . round($file_size/1024, 1) . ' KB). Maksimal 50 KB!']);
-        exit;
-    }
-
-    // Ensure upload directory exists
-    $upload_dir = 'assets/uploads/absensi/';
-    if (!file_exists($upload_dir)) {
-        mkdir($upload_dir, 0777, true);
-    }
-
-    // Save photo file
-    $file_suffix = ($action_type === 'masuk') ? 'masuk' : 'pulang';
-    $file_name = $pegawai_id . '_' . $today_date . '_' . $file_suffix . '.jpg';
-    $file_path = $upload_dir . $file_name;
-
-    if (file_put_contents($file_path, $photo_bin)) {
         // Resolve Shift
         $curr_year = date('Y');
         $curr_month = date('m');
@@ -261,11 +282,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['absen_hari_ini'])) {
                 echo json_encode(['success' => false, 'message' => 'Gagal menyiapkan query update rekap: ' . $koneksi->error]);
             }
         }
-    } else {
-        echo json_encode(['success' => false, 'message' => 'Gagal menyimpan file foto ke server.']);
     }
     exit;
-}
 
 // Retrieve filter parameters
 $filter_bulan = isset($_GET['bulan']) ? trim($_GET['bulan']) : date('m');
@@ -307,7 +325,7 @@ if ($pegawai_id > 0) {
 
     // Fetch detailed list of records for the selected month/year
     $stmt_list = $koneksi->prepare("
-        SELECT p.tgl, p.jns, rp.jam_datang, rp.jam_pulang, rp.status, rp.durasi, rp.keterangan
+        SELECT p.tgl, p.jns, rp.jam_datang, rp.jam_pulang, rp.status, rp.durasi, rp.keterangan, rp.photo
         FROM presensi p
         LEFT JOIN rekap_presensi rp ON rp.id = p.id AND DATE(rp.jam_datang) = p.tgl
         WHERE p.id = ? AND YEAR(p.tgl) = ? AND MONTH(p.tgl) = ?
@@ -343,19 +361,37 @@ if ($pegawai_id > 0) {
 
             <!-- Camera Video Feed or Preview Box -->
             <div style="position: relative; width: 320px; height: 240px; border-radius: var(--radius-md); overflow: hidden; background: #000; border: 2.5px solid var(--border-color); margin-bottom: 20px; box-shadow: var(--shadow);">
-                <?php if ($already_clocked_out): ?>
-                    <!-- If clocked out, show their today's Clock Out selfie as status -->
-                    <img src="<?= $today_photo_out ?: ($today_photo_in ?: 'assets/images/default.jpg') ?>" style="width: 100%; height: 100%; object-fit: cover;" alt="Selfie Hari Ini">
-                    <div style="position: absolute; top: 12px; right: 12px; background: var(--success); color: white; padding: 4px 8px; font-size: 11px; font-weight: 700; border-radius: 20px; display: flex; align-items: center; gap: 4px;">
-                        <span>✓</span> Selesai
+                <?php if ($face_not_registered): ?>
+                    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-size: 13px; text-align: center; padding: 20px; gap: 12px;">
+                        <span style="font-size: 32px;">🔓</span>
+                        <div style="font-weight: 700; color: #f8fafc;">Wajah Belum Terdaftar</div>
+                        <div style="font-size: 11px; line-height: 1.4; color: #94a3b8;">Anda wajib melakukan perekaman wajah terlebih dahulu sebelum menggunakan menu absensi.</div>
+                        <a href="index.php?page=profil" class="btn btn-primary btn-sm" style="font-size: 11px; padding: 6px 12px;">Daftarkan Wajah Sekarang</a>
+                    </div>
+                <?php elseif ($already_clocked_out): ?>
+                    <!-- If clocked out, show verified badge -->
+                    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0f172a; color: #10b981; font-size: 13px; gap: 8px;">
+                        <span style="font-size: 48px;">👤</span>
+                        <span style="font-weight: 700;">Wajah Terverifikasi</span>
+                        <span style="font-size: 11px; color: #94a3b8;">Presensi hari ini selesai</span>
                     </div>
                 <?php else: ?>
                     <!-- If not completely done, show camera live feed for clocking in or out -->
                     <video id="webcam" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);"></video>
+                    <canvas id="overlayCanvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transform: scaleX(-1);"></canvas>
                     <canvas id="canvas" style="display: none;"></canvas>
+                    
                     <div id="camera-loading" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-size: 13px; flex-direction: column; gap: 8px;">
-                        <svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
+                        <div class="loader-spinner" style="width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.3); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s infinite linear;"></div>
                         Membuka kamera...
+                    </div>
+                    
+                    <!-- Loading overlay during ML processing -->
+                    <div id="scanOverlay" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.8); text-align: center; color: white; z-index:10;">
+                        <div>
+                            <div class="loader-spinner" style="width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.3); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s infinite linear; margin: 0 auto 10px;"></div>
+                            <div style="font-size: 12px; font-weight: 600;" id="scanOverlayText">Verifikasi Wajah...</div>
+                        </div>
                     </div>
                 <?php endif; ?>
             </div>
@@ -389,17 +425,21 @@ if ($pegawai_id > 0) {
 
             <!-- Attendance Action Button -->
             <div style="width: 100%; max-width: 320px;">
-                <?php if ($already_clocked_out): ?>
+                <?php if ($face_not_registered): ?>
+                    <a href="index.php?page=profil" class="btn btn-primary" style="width: 100%; padding: 14px; justify-content: center; font-size: 15px; font-weight: 700;">
+                        Daftarkan Wajah
+                    </a>
+                <?php elseif ($already_clocked_out): ?>
                     <button type="button" class="btn btn-secondary" disabled style="width: 100%; padding: 14px; justify-content: center; font-size: 15px; cursor: not-allowed;">
                         Kehadiran Hari Ini Lengkap
                     </button>
                 <?php elseif ($already_clocked_in): ?>
                     <button type="button" id="absenBtn" onclick="doClockOut()" class="btn btn-warning" style="width: 100%; padding: 14px; justify-content: center; font-size: 15px; font-weight: 700; color: #78350f; background: #fef08a; border: 1px solid #fde047; box-shadow: 0 8px 20px rgba(254, 240, 138, 0.4);">
-                        Ambil Foto & Absen Pulang
+                        Pindai Wajah & Absen Pulang
                     </button>
                 <?php else: ?>
                     <button type="button" id="absenBtn" onclick="doClockIn()" class="btn btn-primary" style="width: 100%; padding: 14px; justify-content: center; font-size: 15px; font-weight: 700; box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3);">
-                        Ambil Foto & Absen Masuk
+                        Pindai Wajah & Absen Masuk
                     </button>
                 <?php endif; ?>
             </div>
@@ -470,15 +510,22 @@ if ($pegawai_id > 0) {
                     $day_name = date('l', strtotime($att['tgl']));
                     
                     // Check photos
-                    $photo_in_url = "assets/uploads/absensi/" . $pegawai_id . "_" . $att['tgl'] . "_masuk.jpg";
-                    if (!file_exists($photo_in_url)) {
-                        $legacy_photo = "assets/uploads/absensi/" . $pegawai_id . "_" . $att['tgl'] . ".jpg";
-                        $photo_in_url = file_exists($legacy_photo) ? $legacy_photo : '';
+                    $is_face_verified = isset($att['photo']) && $att['photo'] === 'FACE_VERIFIED';
+                    $photo_in_url = '';
+                    if (!$is_face_verified) {
+                        $photo_in_url = "assets/uploads/absensi/" . $pegawai_id . "_" . $att['tgl'] . "_masuk.jpg";
+                        if (!file_exists($photo_in_url)) {
+                            $legacy_photo = "assets/uploads/absensi/" . $pegawai_id . "_" . $att['tgl'] . ".jpg";
+                            $photo_in_url = file_exists($legacy_photo) ? $legacy_photo : '';
+                        }
                     }
                     
-                    $photo_out_url = "assets/uploads/absensi/" . $pegawai_id . "_" . $att['tgl'] . "_pulang.jpg";
-                    if (!file_exists($photo_out_url)) {
-                        $photo_out_url = '';
+                    $photo_out_url = '';
+                    if (!$is_face_verified) {
+                        $photo_out_url = "assets/uploads/absensi/" . $pegawai_id . "_" . $att['tgl'] . "_pulang.jpg";
+                        if (!file_exists($photo_out_url)) {
+                            $photo_out_url = '';
+                        }
                     }
 
                     $jam_datang_formatted = !empty($att['jam_datang']) ? date('H:i:s', strtotime($att['jam_datang'])) : '-';
@@ -510,7 +557,9 @@ if ($pegawai_id > 0) {
                         <div style="display: flex; gap: 16px; flex-wrap: wrap; background: #f8fafc; padding: 10px; border-radius: 8px;">
                             <!-- Clock In Info -->
                             <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 120px;">
-                                <?php if (!empty($photo_in_url)): ?>
+                                <?php if ($is_face_verified): ?>
+                                    <div style="width: 38px; height: 38px; border-radius: 6px; background: #d1fae5; display: flex; align-items: center; justify-content: center; color: #059669; font-size: 16px;" title="Verifikasi Wajah Berhasil">👤</div>
+                                <?php elseif (!empty($photo_in_url)): ?>
                                     <img src="<?= $photo_in_url ?>" style="width: 38px; height: 38px; border-radius: 6px; object-fit: cover; cursor: pointer; border: 1px solid var(--border-color);" onclick="openLightbox('<?= $photo_in_url ?>', 'Foto Masuk - <?= $tgl_formatted ?>')">
                                 <?php else: ?>
                                     <div style="width: 38px; height: 38px; border-radius: 6px; background: #e2e8f0; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 14px;">📸</div>
@@ -523,7 +572,9 @@ if ($pegawai_id > 0) {
 
                             <!-- Clock Out Info -->
                             <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 120px;">
-                                <?php if (!empty($photo_out_url)): ?>
+                                <?php if ($is_face_verified): ?>
+                                    <div style="width: 38px; height: 38px; border-radius: 6px; background: #d1fae5; display: flex; align-items: center; justify-content: center; color: #059669; font-size: 16px;" title="Verifikasi Wajah Berhasil">👤</div>
+                                <?php elseif (!empty($photo_out_url)): ?>
                                     <img src="<?= $photo_out_url ?>" style="width: 38px; height: 38px; border-radius: 6px; object-fit: cover; cursor: pointer; border: 1px solid var(--border-color);" onclick="openLightbox('<?= $photo_out_url ?>', 'Foto Pulang - <?= $tgl_formatted ?>')">
                                 <?php else: ?>
                                     <div style="width: 38px; height: 38px; border-radius: 6px; background: #e2e8f0; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 14px;">📸</div>
@@ -587,9 +638,32 @@ function startClock() {
 startClock();
 
 // Camera initialization if user has not completed attendance today
-<?php if (!$already_clocked_out): ?>
+// Load Face-API.js library for ML processing
+</script>
+<script src="assets/js/face-api.min.js"></script>
+<script>
+// Camera initialization if user has not completed attendance today and face is registered
+<?php if (!$already_clocked_out && !$face_not_registered): ?>
 const video = document.getElementById('webcam');
 const loader = document.getElementById('camera-loading');
+let localStream = null;
+let modelsLoaded = false;
+const registeredFaceVector = <?= $registered_face_vector ?>;
+
+// Load AI Models
+async function loadModels() {
+    if (modelsLoaded) return true;
+    try {
+        await faceapi.nets.ssdMobilenetv1.loadFromUri('assets/models');
+        await faceapi.nets.faceLandmark68Net.loadFromUri('assets/models');
+        await faceapi.nets.faceRecognitionNet.loadFromUri('assets/models');
+        modelsLoaded = true;
+        return true;
+    } catch (e) {
+        console.error("Gagal memuat model AI: ", e);
+        return false;
+    }
+}
 
 if (video) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -597,74 +671,129 @@ if (video) {
         const actionBtn = document.getElementById('absenBtn');
         if (actionBtn) actionBtn.disabled = true;
     } else {
-        navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                width: { ideal: 320 }, 
-                height: { ideal: 240 },
-                facingMode: 'user'
-            } 
-        })
-        .then(stream => {
-            video.srcObject = stream;
-            loader.style.display = 'none';
-        })
-        .catch(err => {
-            console.error("Gagal mengakses kamera: ", err);
-            loader.innerHTML = '❌ Izin kamera ditolak. Silakan aktifkan izin kamera pada browser Anda untuk melakukan presensi.';
-            const actionBtn = document.getElementById('absenBtn');
-            if (actionBtn) actionBtn.disabled = true;
+        // Load models and then start camera
+        loadModels().then(ok => {
+            if (!ok) {
+                loader.innerHTML = '❌ Gagal memuat model pendeteksi wajah AI.';
+                return;
+            }
+            
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    width: 320, 
+                    height: 240,
+                    facingMode: 'user'
+                } 
+            })
+            .then(stream => {
+                localStream = stream;
+                video.srcObject = stream;
+                loader.style.display = 'none';
+
+                // Real-time box guide
+                video.addEventListener('play', () => {
+                    const canvas = document.getElementById('overlayCanvas');
+                    const displaySize = { width: video.clientWidth, height: video.clientHeight };
+                    faceapi.matchDimensions(canvas, displaySize);
+
+                    setInterval(async () => {
+                        if (video.paused || video.ended) return;
+                        const detections = await faceapi.detectSingleFace(video).withFaceLandmarks();
+                        const context = canvas.getContext('2d');
+                        context.clearRect(0, 0, canvas.width, canvas.height);
+                        
+                        if (detections) {
+                            const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                            const box = resizedDetections.detection.box;
+                            context.strokeStyle = '#10b981'; // Green guide box
+                            context.lineWidth = 2.5;
+                            context.strokeRect(box.x, box.y, box.width, box.height);
+                        }
+                    }, 200);
+                });
+            })
+            .catch(err => {
+                console.error("Gagal mengakses kamera: ", err);
+                loader.innerHTML = '❌ Izin kamera ditolak. Silakan aktifkan izin kamera pada browser Anda untuk melakukan presensi.';
+                const actionBtn = document.getElementById('absenBtn');
+                if (actionBtn) actionBtn.disabled = true;
+            });
         });
     }
 }
 
-function submitAttendance(type) {
+async function submitAttendance(type) {
     const video = document.getElementById('webcam');
-    const canvas = document.getElementById('canvas');
     const absenBtn = document.getElementById('absenBtn');
+    const scanOverlay = document.getElementById('scanOverlay');
+    const scanOverlayText = document.getElementById('scanOverlayText');
     
-    if (!video || !canvas) return;
+    if (!video) return;
 
     absenBtn.disabled = true;
-    absenBtn.innerText = 'Memproses...';
+    absenBtn.innerText = 'Memverifikasi Wajah...';
+    scanOverlay.style.display = 'flex';
+    scanOverlayText.innerText = 'Pencocokan Wajah...';
 
-    const context = canvas.getContext('2d');
-    canvas.width = 320;
-    canvas.height = 240;
-    
-    // Draw mirrored video to canvas
-    context.translate(canvas.width, 0);
-    context.scale(-1, 1);
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    // Export image as compressed JPEG (~15KB)
-    const photoBase64 = canvas.toDataURL('image/jpeg', 0.6);
+    // Wait 500ms to get a stable frame
+    setTimeout(async () => {
+        try {
+            // Detect face descriptor
+            const detection = await faceapi.detectSingleFace(video)
+                .withFaceLandmarks()
+                .withFaceDescriptor();
 
-    // Send via AJAX
-    const formData = new FormData();
-    formData.append('absen_hari_ini', '1');
-    formData.append('type', type);
-    formData.append('photo', photoBase64);
+            if (!detection) {
+                alert("Wajah tidak terdeteksi! Mohon posisikan wajah Anda tepat di depan kamera.");
+                resetAbsenBtn();
+                return;
+            }
 
-    fetch('index.php?page=pegawai&sub=absensi', {
-        method: 'POST',
-        body: formData
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert(data.message);
-            location.reload();
-        } else {
-            alert("Gagal melakukan presensi: " + data.message);
-            absenBtn.disabled = false;
-            absenBtn.innerText = (type === 'masuk') ? 'Ambil Foto & Absen Masuk' : 'Ambil Foto & Absen Pulang';
+            // Compare descriptor
+            const refDescriptor = new Float32Array(registeredFaceVector);
+            const faceMatcher = new faceapi.FaceMatcher(new faceapi.LabeledFaceDescriptors('Pegawai', [refDescriptor]), 0.55);
+            const match = faceMatcher.findBestMatch(detection.descriptor);
+
+            if (match.label === 'unknown') {
+                alert("Verifikasi Wajah Gagal!\nWajah terdeteksi tidak cocok dengan data pendaftaran Anda.");
+                resetAbsenBtn();
+                return;
+            }
+
+            scanOverlayText.innerText = 'Menyimpan Log Absen...';
+
+            // Send via AJAX with placeholder photo name 'FACE_VERIFIED'
+            const formData = new FormData();
+            formData.append('absen_hari_ini', '1');
+            formData.append('type', type);
+            formData.append('photo', 'FACE_VERIFIED');
+
+            const response = await fetch('index.php?page=pegawai&sub=absensi', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert("Gagal melakukan presensi: " + data.message);
+                resetAbsenBtn();
+            }
+
+        } catch (err) {
+            console.error(err);
+            alert("Kesalahan verifikasi wajah: " + err.message);
+            resetAbsenBtn();
         }
-    })
-    .catch(err => {
-        alert("Terjadi kesalahan koneksi!");
+    }, 500);
+
+    function resetAbsenBtn() {
         absenBtn.disabled = false;
-        absenBtn.innerText = (type === 'masuk') ? 'Ambil Foto & Absen Masuk' : 'Ambil Foto & Absen Pulang';
-    });
+        absenBtn.innerText = (type === 'masuk') ? 'Pindai Wajah & Absen Masuk' : 'Pindai Wajah & Absen Pulang';
+        scanOverlay.style.display = 'none';
+    }
 }
 
 function doClockIn() {

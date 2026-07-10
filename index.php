@@ -73,13 +73,14 @@ if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true) {
 // Router Page Configuration
 $page = isset($_GET['page']) ? $_GET['page'] : 'dashboard';
 $sub = isset($_GET['sub']) ? $_GET['sub'] : '';
-$allowed_pages = ['dashboard', 'manajemen', 'dokter', 'pegawai', 'kasir', 'keuangan'];
+$allowed_pages = ['dashboard', 'manajemen', 'dokter', 'pegawai', 'kasir', 'keuangan', 'profil'];
 
 if (!in_array($page, $allowed_pages)) {
     $page = 'dashboard';
 }
 
-$has_access = isset($user_permissions[$page]) && $user_permissions[$page] === '1';
+// Halaman profil dapat diakses oleh semua user yang telah login
+$has_access = ($page === 'profil') || (isset($user_permissions[$page]) && $user_permissions[$page] === '1');
 
 // Intercept AJAX requests before HTML output
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -260,6 +261,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <span>Dashboard</span>
             </a>
 
+            <a href="index.php?page=profil" class="<?= $page === 'profil' ? 'active' : '' ?>">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                <span>Profil Saya</span>
+            </a>
+
             <?php if (isset($user_permissions['manajemen']) && $user_permissions['manajemen'] === '1'): ?>
             <div class="menu-group <?= $page === 'manajemen' ? 'active' : '' ?>">
                 <div class="menu-group-header">
@@ -418,6 +424,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <a href="index.php?page=dashboard" class="drawer-item" onclick="closeDrawerMenu(event)">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                     <span>Dashboard</span>
+                </a>
+
+                <a href="index.php?page=profil" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                    <span>Profil Saya</span>
                 </a>
                 
                 <?php if (isset($user_permissions['manajemen']) && $user_permissions['manajemen'] === '1'): ?>

@@ -82,6 +82,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_action'])) {
         }
         exit;
     }
+    
+    if ($ajax_action === 'reset_face') {
+        $nik = $_POST['nik'] ?? '';
+        if (empty($nik)) {
+            echo json_encode(['success' => false, 'message' => 'NIK wajib ditentukan!']);
+            exit;
+        }
+
+        $stmt_reset = $koneksi->prepare("DELETE FROM face_vector WHERE nik = ?");
+        if ($stmt_reset) {
+            $stmt_reset->bind_param("s", $nik);
+            if ($stmt_reset->execute()) {
+                echo json_encode(['success' => true, 'message' => 'Data verifikasi wajah berhasil di-reset!']);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Gagal me-reset data wajah: ' . $koneksi->error]);
+            }
+            $stmt_reset->close();
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Gagal mempersiapkan query reset.']);
+        }
+        exit;
+    }
 }
 
 // Handle Actions (POST requests)
@@ -255,21 +277,27 @@ if ($total_pages < 1) $total_pages = 1;
 
 // Fetch pegawai data
 if ($sort === 'kontrak') {
-    $query = "SELECT pegawai.*, departemen.nama as nama_dept 
+    $query = "SELECT pegawai.*, departemen.nama as nama_dept,
+                     (CASE WHEN fv.nik IS NOT NULL THEN 1 ELSE 0 END) as has_face
               FROM pegawai 
               LEFT JOIN departemen ON departemen.dep_id = pegawai.departemen
-              LEFT JOIN kontrak_pegawai kp ON kp.nik = pegawai.nik AND kp.tipe = 'Kontrak Pegawai'" . $where_clause;
+              LEFT JOIN kontrak_pegawai kp ON kp.nik = pegawai.nik AND kp.tipe = 'Kontrak Pegawai'
+              LEFT JOIN face_vector fv ON fv.nik = pegawai.nik" . $where_clause;
     $query .= " ORDER BY (kp.tanggal_habis IS NULL) ASC, kp.tanggal_habis ASC, pegawai.nama ASC LIMIT ? OFFSET ?";
 } else if ($sort === 'sip') {
-    $query = "SELECT pegawai.*, departemen.nama as nama_dept 
+    $query = "SELECT pegawai.*, departemen.nama as nama_dept,
+                     (CASE WHEN fv.nik IS NOT NULL THEN 1 ELSE 0 END) as has_face
               FROM pegawai 
               LEFT JOIN departemen ON departemen.dep_id = pegawai.departemen
-              LEFT JOIN kontrak_pegawai kp ON kp.nik = pegawai.nik AND kp.tipe = 'SIP Dokter'" . $where_clause;
+              LEFT JOIN kontrak_pegawai kp ON kp.nik = pegawai.nik AND kp.tipe = 'SIP Dokter'
+              LEFT JOIN face_vector fv ON fv.nik = pegawai.nik" . $where_clause;
     $query .= " ORDER BY (kp.tanggal_habis IS NULL) ASC, kp.tanggal_habis ASC, pegawai.nama ASC LIMIT ? OFFSET ?";
 } else {
-    $query = "SELECT pegawai.*, departemen.nama as nama_dept 
+    $query = "SELECT pegawai.*, departemen.nama as nama_dept,
+                     (CASE WHEN fv.nik IS NOT NULL THEN 1 ELSE 0 END) as has_face
               FROM pegawai 
-              LEFT JOIN departemen ON departemen.dep_id = pegawai.departemen" . $where_clause;
+              LEFT JOIN departemen ON departemen.dep_id = pegawai.departemen
+              LEFT JOIN face_vector fv ON fv.nik = pegawai.nik" . $where_clause;
     $query .= " ORDER BY pegawai.nama ASC LIMIT ? OFFSET ?";
 }
 
@@ -454,6 +482,11 @@ if ($res_dept) {
                             </td>
                             <td style="text-align: right;">
                                 <div style="display: inline-flex; gap: 6px;">
+                                    <?php if (isset($p['has_face']) && $p['has_face'] == 1): ?>
+                                        <button class="btn btn-danger btn-sm" style="background:#dc2626; border-color:#dc2626;" onclick="resetFace('<?= htmlspecialchars($p['nik']) ?>', '<?= htmlspecialchars(addslashes($p['nama'])) ?>')">
+                                            Reset Wajah
+                                        </button>
+                                    <?php endif; ?>
                                     <button class="btn btn-secondary btn-sm" onclick='openEditModal(<?= json_encode($p) ?>)'>
                                         Edit
                                     </button>
@@ -965,5 +998,30 @@ function formatDate(dateStr) {
         return `${parts[2]}-${parts[1]}-${parts[0]}`;
     }
     return dateStr;
+}
+
+function resetFace(nik, nama) {
+    if (!confirm("Apakah Anda yakin ingin me-reset data verifikasi wajah untuk pegawai " + nama + " (" + nik + ")?\nPegawai harus merekam kembali wajahnya lewat halaman Profil sebelum bisa melakukan absensi.")) return;
+    
+    const formData = new FormData();
+    formData.append('ajax_action', 'reset_face');
+    formData.append('nik', nik);
+    
+    fetch('index.php?page=manajemen&sub=pegawai', {
+        method: 'POST',
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            window.location.reload();
+        } else {
+            alert("Gagal me-reset: " + data.message);
+        }
+    })
+    .catch(err => {
+        alert("Kesalahan jaringan saat melakukan reset wajah!");
+    });
 }
 </script>
