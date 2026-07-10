@@ -1,0 +1,5 @@
+# Mengizinkan file weights .bin diunduh oleh browser klien
+<FilesMatch "\.bin$">
+    ForceType application/octet-stream
+    Header set Access-Control-Allow-Origin "*"
+</FilesMatch>

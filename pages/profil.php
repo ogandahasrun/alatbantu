@@ -237,7 +237,7 @@ if ($stmt_check_face) {
             return true;
         } catch (e) {
             console.error(e);
-            alert("Gagal memuat model AI wajah. Pastikan folder assets/models terisi lengkap.");
+            alert("Gagal memuat model AI wajah. Detail: " + e.message + "\n\nPastikan folder assets/models terisi lengkap.");
             loadingOverlay.style.display = 'none';
             return false;
         }

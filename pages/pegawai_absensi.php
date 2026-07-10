@@ -282,8 +282,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['absen_hari_ini'])) {
                 echo json_encode(['success' => false, 'message' => 'Gagal menyiapkan query update rekap: ' . $koneksi->error]);
             }
         }
+        exit;
     }
-    exit;
 
 // Retrieve filter parameters
 $filter_bulan = isset($_GET['bulan']) ? trim($_GET['bulan']) : date('m');

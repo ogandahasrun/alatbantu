@@ -281,8 +281,46 @@ ADD COLUMN menu_baru ENUM('0','1') NOT NULL DEFAULT '0';
 
 ---
 
+## 🚀 Panduan Deployment Fitur Verifikasi Wajah ke Server Live
+
+Saat memindahkan fitur verifikasi wajah (*Face Verification*) dari XAMPP lokal ke server produksi (*live*), Anda wajib memperhatikan beberapa hal berikut agar sistem berjalan lancar:
+
+### 1. Wajib HTTPS (SSL/TLS)
+*   **Keamanan Kamera**: Protokol `navigator.mediaDevices.getUserMedia` diblokir oleh modern browser jika dijalankan melalui koneksi HTTP biasa pada domain eksternal / IP server.
+*   **Solusi**: Pastikan server live Anda sudah terkonfigurasi dengan **HTTPS (SSL aktif)** sebelum merilis fitur ini ke pegawai.
+
+### 2. Konfigurasi Unduhan File `.bin` (MIME-Type)
+Beberapa server produksi (IIS, Nginx, Apache) memblokir pengunduhan file ekstensi `.bin` demi alasan keamanan.
+*   **Solusi (Apache)**: Buat atau pastikan ada file `.htaccess` di dalam direktori `assets/models/` dengan konfigurasi berikut:
+    ```apache
+    <FilesMatch "\.bin$">
+        ForceType application/octet-stream
+        Header set Access-Control-Allow-Origin "*"
+    </FilesMatch>
+    ```
+*   **Solusi (Nginx)**: Tambahkan konfigurasi MIME type atau izinkan ekstensi `.bin`:
+    ```nginx
+    location ~* \.(bin)$ {
+        add_header Access-Control-Allow-Origin *;
+        default_type application/octet-stream;
+    }
+    ```
+
+### 3. Hak Akses Berkas (File Permissions di Linux)
+Jika server live Anda berjalan di atas Linux:
+*   Folder `assets/models/` harus memiliki izin akses **`755`** (`drwxr-xr-x`).
+*   Seluruh file `.bin` dan `.json` di dalamnya harus memiliki izin akses **`644`** (`-rw-r--r--`).
+
+### 4. Pengujian Cepat di Server Live
+Akses langsung file model di browser Anda lewat URL:
+`https://domain-live-anda.com/alatbantu/assets/models/ssd_mobilenetv1_model.bin`
+Jika browser langsung mengunduh file tersebut (tidak keluar error `404` atau `403`), konfigurasi server *live* Anda sudah benar.
+
+---
+
 > [!TIP]
 > Selalu jalankan `php -l pages/nama_file_baru.php` untuk memvalidasi syntax sebelum membuka di browser.
 
 > [!IMPORTANT]
 > Jangan lupa: setiap menu baru yang memerlukan **hak akses khusus** harus ditambahkan kolomnya ke tabel `hak_akses` di database, dan dikelola lewat halaman **Manajemen User** (menu admin utama).
+
