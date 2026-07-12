@@ -142,14 +142,15 @@ if ($stmt_check_face) {
         </div>
 
         <!-- Camera Area -->
-        <div style="position: relative; width: 100%; max-width: 400px; margin: 0 auto 20px; aspect-ratio: 4/3; background: #000; border-radius: var(--radius-md); overflow: hidden; border: 2px solid var(--border-color);">
+        <div style="position: relative; width: 100%; max-width: 400px; margin: 0 auto 20px; aspect-ratio: 4/3; background: #000; border-radius: var(--radius-md); overflow: hidden; border: 2.5px solid var(--border-color);">
             <video id="videoElement" autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);"></video>
+            <img id="fallbackPreview" style="display: none; width: 100%; height: 100%; object-fit: cover;" />
             <canvas id="overlayCanvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transform: scaleX(-1);"></canvas>
             
             <div id="cameraPlaceholder" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.9); text-align: center; padding: 20px;">
                 <span style="font-size: 40px; margin-bottom: 12px;">📷</span>
-                <span style="font-size: 14px; font-weight: 600; color: var(--text-secondary); margin-bottom: 16px;">Kamera belum aktif</span>
-                <button type="button" class="btn btn-primary btn-sm" onclick="startCamera()">Aktifkan Kamera</button>
+                <span id="placeholderText" style="font-size: 14px; font-weight: 600; color: var(--text-secondary); margin-bottom: 16px;">Kamera belum aktif</span>
+                <button type="button" id="btnStartCamera" class="btn btn-primary btn-sm" onclick="startCamera()">Aktifkan Kamera</button>
             </div>
 
             <!-- Loading overlay during ML processing -->
@@ -160,6 +161,7 @@ if ($stmt_check_face) {
                 </div>
             </div>
         </div>
+        <input type="file" id="fileFallback" accept="image/*" capture="user" style="display: none;" onchange="handleFileFallback(this)" />
 
         <div style="text-align: center;">
             <button type="button" id="btnRecord" class="btn btn-primary" style="display: none;" onclick="captureAndSaveFace()">
@@ -215,6 +217,12 @@ if ($stmt_check_face) {
 <script>
     let localStream = null;
     let modelsLoaded = false;
+    const isFallbackMode = !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia;
+
+    if (isFallbackMode) {
+        document.getElementById('placeholderText').innerText = "Mode Foto Manual (HTTP)";
+        document.getElementById('btnStartCamera').innerText = "Ambil Foto Selfie";
+    }
 
     // Load AI Models
     async function loadModels() {
@@ -224,7 +232,7 @@ if ($stmt_check_face) {
         if (modelsLoaded) return true;
         
         loadingOverlay.style.display = 'flex';
-        loadingText.innerText = "Membuat Model AI...";
+        loadingText.innerText = "Memuat Model AI Wajah...";
         
         try {
             // Path models relative to index.php
@@ -245,6 +253,13 @@ if ($stmt_check_face) {
 
     // Start Camera Stream
     async function startCamera() {
+        if (isFallbackMode) {
+            const ok = await loadModels();
+            if (!ok) return;
+            document.getElementById('fileFallback').click();
+            return;
+        }
+
         const video = document.getElementById('videoElement');
         const placeholder = document.getElementById('cameraPlaceholder');
         const btnRecord = document.getElementById('btnRecord');
@@ -346,5 +361,87 @@ if ($stmt_check_face) {
                 loadingOverlay.style.display = 'none';
             }
         }, 500);
+    }
+
+    async function handleFileFallback(input) {
+        if (!input.files || !input.files[0]) return;
+
+        const file = input.files[0];
+        const previewImg = document.getElementById('fallbackPreview');
+        const video = document.getElementById('videoElement');
+        const placeholder = document.getElementById('cameraPlaceholder');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingText = document.getElementById('loadingText');
+
+        loadingOverlay.style.display = 'flex';
+        loadingText.innerText = "Membaca Foto...";
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            previewImg.src = e.target.result;
+            previewImg.style.display = 'block';
+            video.style.display = 'none';
+            placeholder.style.display = 'none';
+            overlayCanvas.style.display = 'none';
+
+            previewImg.onload = async function() {
+                try {
+                    loadingText.innerText = "Mendeteksi & Merekam Wajah (AI)...";
+                    
+                    // Detect face descriptor
+                    const detection = await faceapi.detectSingleFace(previewImg)
+                        .withFaceLandmarks()
+                        .withFaceDescriptor();
+
+                    if (!detection) {
+                        alert("Wajah tidak terdeteksi! Mohon ambil foto selfie ulang dengan wajah tegak menghadap kamera dan pencahayaan yang cukup.");
+                        resetFallbackUI();
+                        return;
+                    }
+
+                    // Get descriptor array (128 floats)
+                    const descriptorArray = Array.from(detection.descriptor);
+                    const vectorJson = JSON.stringify(descriptorArray);
+
+                    // Send via AJAX to save_face_vector
+                    const formData = new FormData();
+                    formData.append('action', 'save_face_vector');
+                    formData.append('vector', vectorJson);
+
+                    const response = await fetch(window.location.href, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    if (result.success) {
+                        alert("Berhasil! Wajah Anda telah terdaftar.");
+                        window.location.reload();
+                    } else {
+                        alert("Gagal: " + result.message);
+                        resetFallbackUI();
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("Kesalahan pemrosesan wajah: " + err.message);
+                    resetFallbackUI();
+                } finally {
+                    loadingOverlay.style.display = 'none';
+                }
+            };
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function resetFallbackUI() {
+        const previewImg = document.getElementById('fallbackPreview');
+        const placeholder = document.getElementById('cameraPlaceholder');
+        const fileInput = document.getElementById('fileFallback');
+        
+        fileInput.value = '';
+        previewImg.style.display = 'none';
+        previewImg.src = '';
+        placeholder.style.display = 'flex';
     }
 </script>

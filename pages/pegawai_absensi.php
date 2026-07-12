@@ -378,13 +378,15 @@ if ($pegawai_id > 0) {
                 <?php else: ?>
                     <!-- If not completely done, show camera live feed for clocking in or out -->
                     <video id="webcam" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);"></video>
+                    <img id="fallbackPreview" style="display: none; width: 100%; height: 100%; object-fit: cover;" />
                     <canvas id="overlayCanvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; transform: scaleX(-1);"></canvas>
                     <canvas id="canvas" style="display: none;"></canvas>
                     
-                    <div id="camera-loading" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-size: 13px; flex-direction: column; gap: 8px;">
+                    <div id="camera-loading" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #94a3b8; font-size: 13px; flex-direction: column; gap: 8px; text-align: center; padding: 15px;">
                         <div class="loader-spinner" style="width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.3); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s infinite linear;"></div>
                         Membuka kamera...
                     </div>
+                    <input type="file" id="fileFallback" accept="image/*" capture="user" style="display: none;" onchange="handleFileFallback(this)" />
                     
                     <!-- Loading overlay during ML processing -->
                     <div id="scanOverlay" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.8); text-align: center; color: white; z-index:10;">
@@ -649,6 +651,8 @@ const loader = document.getElementById('camera-loading');
 let localStream = null;
 let modelsLoaded = false;
 const registeredFaceVector = <?= $registered_face_vector ?>;
+let isFallbackMode = false;
+let pendingType = null;
 
 // Load AI Models
 async function loadModels() {
@@ -667,9 +671,15 @@ async function loadModels() {
 
 if (video) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        loader.innerHTML = '❌ Kamera diblokir oleh browser karena koneksi tidak aman (HTTP). Silakan akses aplikasi menggunakan protokol <strong>HTTPS</strong> pada handphone Anda.';
-        const actionBtn = document.getElementById('absenBtn');
-        if (actionBtn) actionBtn.disabled = true;
+        isFallbackMode = true;
+        loader.innerHTML = 'ℹ️ <strong>Mode Foto Manual (HTTP)</strong><br><span style="font-size: 11px; color: #94a3b8;">Browser membatasi streaming kamera karena tanpa SSL. Memuat model AI...</span>';
+        loadModels().then(ok => {
+            if (!ok) {
+                loader.innerHTML = '❌ Gagal memuat model pendeteksi wajah AI.';
+            } else {
+                loader.innerHTML = 'ℹ️ <strong>Mode Foto Manual (HTTP)</strong><br><span style="font-size: 11px; color: #94a3b8;">Model AI berhasil dimuat. Klik tombol di bawah untuk mengambil foto selfie.</span>';
+            }
+        });
     } else {
         // Load models and then start camera
         loadModels().then(ok => {
@@ -796,12 +806,124 @@ async function submitAttendance(type) {
     }
 }
 
+async function handleFileFallback(input) {
+    if (!input.files || !input.files[0]) return;
+    
+    const file = input.files[0];
+    const previewImg = document.getElementById('fallbackPreview');
+    const webcamVideo = document.getElementById('webcam');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const loader = document.getElementById('camera-loading');
+    const scanOverlay = document.getElementById('scanOverlay');
+    const scanOverlayText = document.getElementById('scanOverlayText');
+    const absenBtn = document.getElementById('absenBtn');
+    
+    absenBtn.disabled = true;
+    absenBtn.innerText = 'Memverifikasi Wajah...';
+    scanOverlay.style.display = 'flex';
+    scanOverlayText.innerText = 'Membaca Foto...';
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        previewImg.src = e.target.result;
+        previewImg.style.display = 'block';
+        if (webcamVideo) webcamVideo.style.display = 'none';
+        if (overlayCanvas) overlayCanvas.style.display = 'none';
+        if (loader) loader.style.display = 'none';
+        
+        previewImg.onload = async function() {
+            try {
+                scanOverlayText.innerText = 'Pencocokan Wajah...';
+                
+                // Detect face descriptor
+                const detection = await faceapi.detectSingleFace(previewImg)
+                    .withFaceLandmarks()
+                    .withFaceDescriptor();
+                    
+                if (!detection) {
+                    alert("Wajah tidak terdeteksi! Mohon ambil foto selfie ulang dengan wajah tegak menghadap kamera dan pencahayaan yang cukup.");
+                    resetFallbackUI();
+                    return;
+                }
+                
+                // Compare descriptor
+                const refDescriptor = new Float32Array(registeredFaceVector);
+                const faceMatcher = new faceapi.FaceMatcher(new faceapi.LabeledFaceDescriptors('Pegawai', [refDescriptor]), 0.55);
+                const match = faceMatcher.findBestMatch(detection.descriptor);
+                
+                if (match.label === 'unknown') {
+                    alert("Verifikasi Wajah Gagal!\nWajah terdeteksi tidak cocok dengan data pendaftaran Anda. Silakan coba ambil foto ulang.");
+                    resetFallbackUI();
+                    return;
+                }
+                
+                scanOverlayText.innerText = 'Menyimpan Log Absen...';
+                
+                // Send via AJAX
+                const formData = new FormData();
+                formData.append('absen_hari_ini', '1');
+                formData.append('type', pendingType);
+                formData.append('photo', 'FACE_VERIFIED');
+                
+                const response = await fetch('index.php?page=pegawai&sub=absensi', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    alert(data.message);
+                    location.reload();
+                } else {
+                    alert("Gagal melakukan presensi: " + data.message);
+                    resetFallbackUI();
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Kesalahan verifikasi wajah: " + err.message);
+                resetFallbackUI();
+            }
+        };
+    };
+    reader.readAsDataURL(file);
+}
+
+function resetFallbackUI() {
+    const previewImg = document.getElementById('fallbackPreview');
+    const loader = document.getElementById('camera-loading');
+    const scanOverlay = document.getElementById('scanOverlay');
+    const absenBtn = document.getElementById('absenBtn');
+    const fileInput = document.getElementById('fileFallback');
+    
+    fileInput.value = '';
+    previewImg.style.display = 'none';
+    previewImg.src = '';
+    if (loader) {
+        loader.style.display = 'flex';
+        loader.innerHTML = 'ℹ️ <strong>Mode Foto Manual (HTTP)</strong><br><span style="font-size: 11px; color: #94a3b8;">Model AI dimuat. Klik tombol di bawah untuk mengambil foto selfie.</span>';
+    }
+    scanOverlay.style.display = 'none';
+    
+    absenBtn.disabled = false;
+    absenBtn.innerText = (pendingType === 'masuk') ? 'Pindai Wajah & Absen Masuk' : 'Pindai Wajah & Absen Pulang';
+}
+
 function doClockIn() {
-    submitAttendance('masuk');
+    if (isFallbackMode) {
+        pendingType = 'masuk';
+        document.getElementById('fileFallback').click();
+    } else {
+        submitAttendance('masuk');
+    }
 }
 
 function doClockOut() {
-    submitAttendance('pulang');
+    if (isFallbackMode) {
+        pendingType = 'pulang';
+        document.getElementById('fileFallback').click();
+    } else {
+        submitAttendance('pulang');
+    }
 }
 <?php endif; ?>
 
