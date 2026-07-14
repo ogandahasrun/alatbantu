@@ -335,6 +335,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <a href="index.php?page=kasir&sub=payment_point" class="<?= ($page === 'kasir' && ($sub === 'payment_point' || empty($sub))) ? 'active' : '' ?>">
                         <span>• Payment Point</span>
                     </a>
+                    <a href="index.php?page=kasir&sub=penjualan_bebas" class="<?= ($page === 'kasir' && $sub === 'penjualan_bebas') ? 'active' : '' ?>">
+                        <span>• Penjualan Bebas</span>
+                    </a>
                 </div>
             </div>
             <?php endif; ?>
@@ -474,6 +477,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <a href="index.php?page=kasir&sub=payment_point" class="drawer-item" onclick="closeDrawerMenu(event)">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
                     <span>Payment Point</span>
+                </a>
+                <a href="index.php?page=kasir&sub=penjualan_bebas" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path><line x1="3" y1="6" x2="21" y2="6"></line><path d="M16 10a4 4 0 0 1-8 0"></path></svg>
+                    <span>Penjualan Bebas</span>
                 </a>
                 <?php endif; ?>
                 
