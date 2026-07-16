@@ -23,6 +23,8 @@ if ($sub === 'dokter') {
     } else {
         include 'manajemen_user.php';
     }
+} elseif ($sub === 'penggajian') {
+    include 'manajemen_penggajian.php';
 } else {
     include 'manajemen_pegawai.php';
 }

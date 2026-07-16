@@ -282,6 +282,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <a href="index.php?page=manajemen&sub=mapping_atasan" class="<?= ($page === 'manajemen' && $sub === 'mapping_atasan') ? 'active' : '' ?>">
                         <span>• Mapping Atasan</span>
                     </a>
+                    <a href="index.php?page=manajemen&sub=penggajian" class="<?= ($page === 'manajemen' && $sub === 'penggajian') ? 'active' : '' ?>">
+                        <span>• Penggajian</span>
+                    </a>
                     <?php if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true): ?>
                     <a href="index.php?page=manajemen&sub=user" class="<?= ($page === 'manajemen' && $sub === 'user') ? 'active' : '' ?>" style="color: #f59e0b !important;">
                         <span>🔑 Manajemen User</span>
@@ -442,6 +445,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <a href="index.php?page=manajemen&sub=dokter" class="drawer-item" onclick="closeDrawerMenu(event)">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
                     <span>Data Dokter</span>
+                </a>
+                <a href="index.php?page=manajemen&sub=penggajian" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    <span>Penggajian</span>
                 </a>
                 <?php if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true): ?>
                 <a href="index.php?page=manajemen&sub=user" class="drawer-item" onclick="closeDrawerMenu(event)" style="color: #b45309;">
