@@ -57,6 +57,13 @@ if (!empty($nik_peg)) {
     }
 }
 
+// Ambil toleransi keterlambatan
+$toleransi = 0;
+$q_tol = $koneksi->query("SELECT toleransi FROM set_keterlambatan LIMIT 1");
+if ($q_tol && $dt = $q_tol->fetch_assoc()) {
+    $toleransi = (int)$dt['toleransi'];
+}
+
 // Data Jam Jaga
 $map_jam_masuk = [];
 if ($peg_id > 0) {
@@ -194,11 +201,138 @@ if ($peg_id > 0) {
         $total_pages = ceil($total_peg / $limit);
         if ($total_pages < 1) $total_pages = 1;
         
-        $q_list = "SELECT nik, nama, departemen FROM pegawai $where ORDER BY nama ASC LIMIT $limit OFFSET $offset";
+        $q_list = "SELECT id, nik, nama, departemen FROM pegawai $where ORDER BY nama ASC LIMIT $limit OFFSET $offset";
         $stmt_l = $koneksi->prepare($q_list);
         if ($where) $stmt_l->bind_param($types, ...$params);
         $stmt_l->execute();
         $res_list = $stmt_l->get_result();
+        
+        $pegawai_list = [];
+        $peg_ids = [];
+        $peg_niks = [];
+        while($p = $res_list->fetch_assoc()) {
+            $pegawai_list[] = $p;
+            $peg_ids[] = (int)$p['id'];
+            $peg_niks[] = "'" . $koneksi->real_escape_string($p['nik']) . "'";
+        }
+        $stmt_l->close();
+
+        // Fetch jam_jaga
+        $map_jam_jaga = []; 
+        $r_jam = $koneksi->query("SELECT dep_id, shift, jam_masuk, jam_pulang FROM jam_jaga");
+        if ($r_jam) {
+            while($rj = $r_jam->fetch_assoc()){
+                $map_jam_jaga[$rj['dep_id']][$rj['shift']] = ['masuk' => $rj['jam_masuk'], 'pulang' => $rj['jam_pulang']];
+            }
+        }
+        $r_jam_fallback = $koneksi->query("SELECT shift, MIN(jam_masuk) as jam_masuk, MIN(jam_pulang) as jam_pulang FROM jam_jaga GROUP BY shift");
+        $map_jam_fallback = [];
+        if ($r_jam_fallback) {
+            while($rj = $r_jam_fallback->fetch_assoc()){
+                $map_jam_fallback[$rj['shift']] = ['masuk' => $rj['jam_masuk'], 'pulang' => $rj['jam_pulang']];
+            }
+        }
+
+        $rekap_data = [];
+        if (!empty($peg_ids)) {
+            // 1. Fetch jadwal for these employees
+            $id_list = implode(',', $peg_ids);
+            $q_jadwal = "SELECT * FROM jadwal_pegawai WHERE id IN ($id_list) AND tahun = ? AND bulan = ?";
+            $stmt_j = $koneksi->prepare($q_jadwal);
+            $stmt_j->bind_param("ss", $tahun, $bulan);
+            $stmt_j->execute();
+            $res_jadwal = $stmt_j->get_result();
+            $jadwal_all = [];
+            while($row = $res_jadwal->fetch_assoc()) {
+                $jadwal_all[$row['id']] = $row;
+            }
+            $stmt_j->close();
+            
+            // 2. Fetch absensi for these employees
+            $nik_list = implode(',', $peg_niks);
+            $q_absen = "SELECT 
+                            pegawai.id,
+                            DATE(detail_absensi.tanggal) as tgl,
+                            MIN(TIME(detail_absensi.tanggal)) as jam_masuk,
+                            MAX(TIME(detail_absensi.tanggal)) as jam_keluar
+                        FROM pegawai
+                        INNER JOIN mapping_absensi ON mapping_absensi.nik = pegawai.nik
+                        INNER JOIN detail_absensi ON detail_absensi.id = mapping_absensi.id
+                        WHERE pegawai.nik IN ($nik_list)
+                          AND YEAR(detail_absensi.tanggal) = ?
+                          AND MONTH(detail_absensi.tanggal) = ?
+                        GROUP BY pegawai.id, DATE(detail_absensi.tanggal)";
+            $stmt_a = $koneksi->prepare($q_absen);
+            $stmt_a->bind_param("ss", $tahun, $bulan);
+            $stmt_a->execute();
+            $res_absen = $stmt_a->get_result();
+            $absen_all = [];
+            while($row = $res_absen->fetch_assoc()) {
+                $absen_all[$row['id']][$row['tgl']] = $row;
+            }
+            $stmt_a->close();
+            
+            // 3. Process the logic for each employee
+            $days_in_month = cal_days_in_month(CAL_GREGORIAN, (int)$bulan, (int)$tahun);
+            
+            foreach($pegawai_list as $p) {
+                $pid = $p['id'];
+                $pdept = $p['departemen'];
+                
+                $count_hadir = 0;
+                $count_telat = 0;
+                $count_cepat = 0;
+                $count_alfa = 0;
+                
+                $p_jadwal = $jadwal_all[$pid] ?? [];
+                $p_absen = $absen_all[$pid] ?? [];
+                
+                $jam_map = isset($map_jam_jaga[$pdept]) && !empty($map_jam_jaga[$pdept]) ? $map_jam_jaga[$pdept] : $map_jam_fallback;
+                
+                for ($d = 1; $d <= $days_in_month; $d++) {
+                    $date_str = $tahun . '-' . $bulan . '-' . str_pad($d, 2, '0', STR_PAD_LEFT);
+                    $col_h = 'h' . $d;
+                    $shift = $p_jadwal[$col_h] ?? '-';
+                    if ($shift === '') $shift = '-';
+                    
+                    $absen_hari_ini = $p_absen[$date_str] ?? null;
+                    
+                    if ($absen_hari_ini) {
+                        $count_hadir++;
+                        
+                        if ($shift !== '-' && isset($jam_map[$shift])) {
+                            $j_masuk = $jam_map[$shift]['masuk'];
+                            $j_pulang = $jam_map[$shift]['pulang'];
+                            
+                            $a_masuk = date('H:i:s', strtotime($absen_hari_ini['jam_masuk']));
+                            $j_masuk_tol = date('H:i:s', strtotime("+$toleransi minutes", strtotime($j_masuk)));
+                            
+                            if ($a_masuk > $j_masuk_tol) {
+                                $count_telat++;
+                            }
+                            
+                            if ($absen_hari_ini['jam_masuk'] !== $absen_hari_ini['jam_keluar']) {
+                                $a_keluar = date('H:i:s', strtotime($absen_hari_ini['jam_keluar']));
+                                if ($j_pulang && $a_keluar < $j_pulang) {
+                                    $count_cepat++;
+                                }
+                            }
+                        }
+                    } else {
+                        if ($shift !== '-') {
+                            $count_alfa++;
+                        }
+                    }
+                }
+                
+                $rekap_data[$pid] = [
+                    'hadir' => $count_hadir,
+                    'telat' => $count_telat,
+                    'cepat' => $count_cepat,
+                    'alfa' => $count_alfa
+                ];
+            }
+        }
         ?>
 
         <div style="margin-bottom: 20px; display: flex; gap: 10px; justify-content: space-between; align-items: center;">
@@ -220,22 +354,33 @@ if ($peg_id > 0) {
                         <th>NIK</th>
                         <th>Nama Pegawai</th>
                         <th>Departemen</th>
+                        <th style="text-align: center;">Hadir</th>
+                        <th style="text-align: center;">Telat</th>
+                        <th style="text-align: center;">Cpt. Pulang</th>
+                        <th style="text-align: center;">Alfa</th>
                         <th style="width: 120px; text-align: center;">Aksi</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php while($p = $res_list->fetch_assoc()): ?>
+                    <?php foreach($pegawai_list as $p): 
+                        $pid = $p['id'];
+                        $rd = $rekap_data[$pid] ?? ['hadir'=>0, 'telat'=>0, 'cepat'=>0, 'alfa'=>0];
+                    ?>
                     <tr>
                         <td><?= htmlspecialchars($p['nik']) ?></td>
                         <td><strong><?= htmlspecialchars($p['nama']) ?></strong></td>
                         <td><?= htmlspecialchars($p['departemen'] ?? '-') ?></td>
+                        <td style="text-align: center; color: #059669; font-weight: bold;"><?= $rd['hadir'] ?> x</td>
+                        <td style="text-align: center; color: #ea580c; font-weight: bold;"><?= $rd['telat'] ?> x</td>
+                        <td style="text-align: center; color: #d97706; font-weight: bold;"><?= $rd['cepat'] ?> x</td>
+                        <td style="text-align: center; color: #dc2626; font-weight: bold;"><?= $rd['alfa'] ?> x</td>
                         <td style="text-align: center;">
                             <a href="index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&nik_pegawai=<?= urlencode($p['nik']) ?>" class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; text-decoration: none;">Lihat Rekap</a>
                         </td>
                     </tr>
-                    <?php endwhile; ?>
-                    <?php if ($res_list->num_rows === 0): ?>
-                    <tr><td colspan="4" style="text-align: center; color: var(--text-secondary); padding: 20px;">Data pegawai tidak ditemukan.</td></tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($pegawai_list)): ?>
+                    <tr><td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 20px;">Data pegawai tidak ditemukan.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -254,7 +399,6 @@ if ($peg_id > 0) {
             endfor; ?>
         </div>
         <?php endif; ?>
-        <?php $stmt_l->close(); ?>
 
     <?php else: ?>
         <div style="margin-bottom: 20px;">
@@ -301,7 +445,9 @@ if ($peg_id > 0) {
                             // Hitung Keterlambatan
                             if ($shift_hari_ini !== '-' && isset($map_jam_masuk[$shift_hari_ini])) {
                                 $jadwal_masuk = $map_jam_masuk[$shift_hari_ini];
-                                if ($jam_masuk > $jadwal_masuk) {
+                                $jadwal_masuk_tol = date('H:i:s', strtotime("+$toleransi minutes", strtotime($jadwal_masuk)));
+                                
+                                if ($jam_masuk > $jadwal_masuk_tol) {
                                     $selisih = strtotime($jam_masuk) - strtotime($jadwal_masuk);
                                     $menit_telat = floor($selisih / 60);
                                     $keterangan .= " (Telat $menit_telat menit)";

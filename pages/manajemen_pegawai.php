@@ -214,7 +214,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             if ($stmt_del->execute()) {
                 $success_msg = "Data pegawai NIK $nik berhasil dihapus.";
             } else {
-                $error_msg = "Gagal menghapus pegawai: " . $koneksi->error;
+                // errno 1451 = Cannot delete: a foreign key constraint fails
+                if ($koneksi->errno === 1451) {
+                    $error_msg = "Pegawai dengan NIK <strong>$nik</strong> tidak dapat dihapus karena masih memiliki data terkait (absensi, jadwal, gaji, dll). Silakan ubah status pegawai menjadi <strong>NON AKTIF</strong> melalui tombol Edit.";
+                } else {
+                    $error_msg = "Gagal menghapus pegawai: " . $koneksi->error;
+                }
             }
             $stmt_del->close();
         } else {
@@ -231,7 +236,11 @@ $sort = trim($_GET['sort'] ?? 'nama');
 
 $page_num = isset($_GET['p']) ? (int)$_GET['p'] : 1;
 if ($page_num < 1) $page_num = 1;
-$limit = 10;
+$limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 10;
+$allowed_limits = [10, 25, 50, 100, 250, 500];
+if (!in_array($limit, $allowed_limits)) {
+    $limit = 10;
+}
 $offset = ($page_num - 1) * $limit;
 
 // Construct Query Conditions
@@ -351,6 +360,7 @@ if ($res_dept) {
         $departments[] = $row;
     }
 }
+
 ?>
 
 <div class="page-header">
@@ -382,50 +392,115 @@ if ($res_dept) {
 <div class="content-card">
     <div class="card-header">
         <h3 class="card-title">Master Pegawai</h3>
-        
-        <!-- Filter Form -->
-        <form method="GET" style="display: flex; gap: 10px; width: 100%; max-width: 680px; flex-wrap: wrap;">
-            <input type="hidden" name="page" value="manajemen">
-            <input type="hidden" name="sub" value="pegawai">
-            <input type="text" name="search" class="form-control" placeholder="Cari NIK atau Nama..." value="<?= htmlspecialchars($search) ?>" style="flex: 1; min-width: 150px;">
-            
-            <select name="dept" class="form-control" style="width: 160px;">
-                <option value="">-- Semua Dept --</option>
-                <?php foreach ($departments as $d): ?>
-                    <option value="<?= htmlspecialchars($d['dep_id']) ?>" <?= $filter_dept === $d['dep_id'] ? 'selected' : '' ?>><?= htmlspecialchars($d['nama']) ?></option>
-                <?php endforeach; ?>
-            </select>
-
-            <select name="status" class="form-control" style="width: 130px;">
-                <option value="">-- Semua Status --</option>
-                <option value="AKTIF" <?= $filter_status === 'AKTIF' ? 'selected' : '' ?>>AKTIF</option>
-                <option value="CUTI" <?= $filter_status === 'CUTI' ? 'selected' : '' ?>>CUTI</option>
-                <option value="KELUAR" <?= $filter_status === 'KELUAR' ? 'selected' : '' ?>>KELUAR</option>
-                <option value="TENAGA LUAR" <?= $filter_status === 'TENAGA LUAR' ? 'selected' : '' ?>>TENAGA LUAR</option>
-                <option value="NON AKTIF" <?= $filter_status === 'NON AKTIF' ? 'selected' : '' ?>>NON AKTIF</option>
-            </select>
-
-            <select name="sort" class="form-control" style="width: 180px;">
-                <option value="nama" <?= $sort === 'nama' ? 'selected' : '' ?>>Urut: Nama (A-Z)</option>
-                <option value="kontrak" <?= $sort === 'kontrak' ? 'selected' : '' ?>>Urut: Kontrak Terdekat</option>
-                <option value="sip" <?= $sort === 'sip' ? 'selected' : '' ?>>Urut: SIP Terdekat</option>
-            </select>
-
-            <button type="submit" class="btn btn-secondary btn-sm" style="padding: 10px 14px;">Filter</button>
-        </form>
+        <span style="font-size: 13px; color: var(--text-secondary);"><?= number_format($total_rows) ?> pegawai</span>
     </div>
 
-    <div class="table-responsive">
+    <!-- Baris pencarian & filter: di luar card-header, tidak overflow -->
+    <form method="GET" style="padding: 12px 20px; border-bottom: 1px solid var(--border-color);">
+        <input type="hidden" name="page" value="manajemen">
+        <input type="hidden" name="sub" value="pegawai">
+        <input type="hidden" name="limit" value="<?= htmlspecialchars($limit) ?>">
+        <div style="display: block; width: 100%;">
+            <!-- Baris 1: Pencarian -->
+            <div style="display: flex; gap: 8px; margin-bottom: 8px; width: 100%; box-sizing: border-box;">
+                <input type="text" name="search" class="form-control"
+                    placeholder="Cari NIK atau Nama pegawai..."
+                    value="<?= htmlspecialchars($search) ?>"
+                    style="flex: 1; min-width: 0;">
+                <button type="submit" class="btn btn-primary btn-sm" style="white-space: nowrap; flex-shrink: 0;">Cari</button>
+                <?php if ($search || $filter_dept || $filter_status): ?>
+                    <a href="index.php?page=manajemen&sub=pegawai"
+                       class="btn btn-secondary btn-sm"
+                       style="text-decoration:none; white-space:nowrap; flex-shrink:0;">Reset</a>
+                <?php endif; ?>
+            </div>
+            <!-- Baris 2: Filter dropdown -->
+            <div style="display: flex; gap: 8px; width: 100%; box-sizing: border-box;">
+                <select name="dept" class="form-control" style="flex: 1; min-width: 0;">
+                    <option value="">-- Semua Departemen --</option>
+                    <?php foreach ($departments as $d): ?>
+                        <option value="<?= htmlspecialchars($d['dep_id']) ?>"
+                            <?= $filter_dept === $d['dep_id'] ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($d['nama']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="status" class="form-control" style="flex: 1; min-width: 0;">
+                    <option value="">-- Semua Status --</option>
+                    <option value="AKTIF"       <?= $filter_status === 'AKTIF'       ? 'selected' : '' ?>>AKTIF</option>
+                    <option value="CUTI"        <?= $filter_status === 'CUTI'        ? 'selected' : '' ?>>CUTI</option>
+                    <option value="KELUAR"      <?= $filter_status === 'KELUAR'      ? 'selected' : '' ?>>KELUAR</option>
+                    <option value="TENAGA LUAR" <?= $filter_status === 'TENAGA LUAR' ? 'selected' : '' ?>>TENAGA LUAR</option>
+                    <option value="NON AKTIF"   <?= $filter_status === 'NON AKTIF'   ? 'selected' : '' ?>>NON AKTIF</option>
+                </select>
+                <select name="sort" class="form-control" style="flex: 1; min-width: 0;">
+                    <option value="nama"    <?= $sort === 'nama'    ? 'selected' : '' ?>>Nama (A-Z)</option>
+                    <option value="kontrak" <?= $sort === 'kontrak' ? 'selected' : '' ?>>Kontrak Terdekat</option>
+                    <option value="sip"     <?= $sort === 'sip'     ? 'selected' : '' ?>>SIP Terdekat</option>
+                </select>
+            </div>
+        </div>
+    </form>
+
+    <style>
+        /* Khusus untuk tabel pegawai - override global style */
+        .pegawai-table-wrap {
+            overflow-x: auto;
+            overflow-y: auto;
+            max-height: 70vh;
+        }
+        .pegawai-table-wrap .table-custom {
+            table-layout: auto !important;
+            width: auto !important;
+            min-width: 1100px !important;
+        }
+        .pegawai-table-wrap .table-custom thead {
+            display: table-header-group !important;
+        }
+        .pegawai-table-wrap .table-custom tbody {
+            display: table-row-group !important;
+        }
+        .pegawai-table-wrap .table-custom tr {
+            display: table-row !important;
+            background: transparent !important;
+            border: none !important;
+            border-radius: 0 !important;
+            margin-bottom: 0 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+        }
+        .pegawai-table-wrap .table-custom th,
+        .pegawai-table-wrap .table-custom td {
+            display: table-cell !important;
+            text-align: left !important;
+            vertical-align: middle !important;
+            white-space: normal !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+        .pegawai-table-wrap .table-custom td::before {
+            display: none !important;
+            content: none !important;
+        }
+        .col-nik    { width: 120px; min-width: 100px; }
+        .col-nama   { width: 220px; min-width: 160px; }
+        .col-gender { width: 70px;  min-width: 60px; }
+        .col-jabatan{ width: 150px; min-width: 120px; }
+        .col-dept   { width: 150px; min-width: 120px; }
+        .col-status { width: 90px;  min-width: 80px; }
+        .col-aksi   { width: 300px; min-width: 280px; white-space: nowrap; text-align: right !important; }
+    </style>
+    <div class="pegawai-table-wrap">
         <table class="table-custom">
             <thead>
                 <tr>
-                    <th>NIK</th>
-                    <th>Nama Pegawai</th>
-                    <th>Gender</th>
-                    <th>Jabatan</th>
-                    <th>Departemen</th>
-                    <th>Status</th>
-                    <th style="text-align: right;">Aksi</th>
+                    <th class="col-nik">NIK</th>
+                    <th class="col-nama">Nama Pegawai</th>
+                    <th class="col-gender">Gender</th>
+                    <th class="col-jabatan">Jabatan</th>
+                    <th class="col-dept">Departemen</th>
+                    <th class="col-status">Status</th>
+                    <th class="col-aksi">Aksi</th>
                 </tr>
             </thead>
             <tbody>
@@ -480,17 +555,17 @@ if ($res_dept) {
                                     <?= htmlspecialchars($p['stts_aktif']) ?>
                                 </span>
                             </td>
-                            <td style="text-align: right;">
-                                <div style="display: inline-flex; gap: 6px;">
+                            <td class="col-aksi">
+                                <div style="display: inline-flex; gap: 6px; justify-content: flex-end; width: 100%;">
                                     <?php if (isset($p['has_face']) && $p['has_face'] == 1): ?>
                                         <button class="btn btn-danger btn-sm" style="background:#dc2626; border-color:#dc2626;" onclick="resetFace('<?= htmlspecialchars($p['nik']) ?>', '<?= htmlspecialchars(addslashes($p['nama'])) ?>')">
                                             Reset Wajah
                                         </button>
                                     <?php endif; ?>
-                                    <button class="btn btn-secondary btn-sm" onclick='openEditModal(<?= json_encode($p) ?>)'>
+                                    <button class="btn btn-secondary btn-sm" onclick="openEditModal(<?= htmlspecialchars(json_encode($p), ENT_QUOTES, 'UTF-8') ?>)">
                                         Edit
                                     </button>
-                                    <button class="btn btn-primary btn-sm" onclick='openDokumenModal(<?= json_encode($p) ?>)'>
+                                    <button class="btn btn-primary btn-sm" onclick="openDokumenModal(<?= htmlspecialchars(json_encode($p), ENT_QUOTES, 'UTF-8') ?>)">
                                         Kontrak/SIP
                                     </button>
                                     <button class="btn btn-danger btn-sm" onclick="confirmDeletePegawai('<?= htmlspecialchars($p['nik']) ?>')">
@@ -506,13 +581,34 @@ if ($res_dept) {
     </div>
 
     <!-- Pagination -->
-    <?php if ($total_pages > 1): ?>
-        <div style="display: flex; justify-content: center; gap: 8px; margin-top: 24px;">
-            <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <a href="index.php?page=manajemen&sub=pegawai&search=<?= urlencode($search) ?>&dept=<?= urlencode($filter_dept) ?>&status=<?= urlencode($filter_status) ?>&sort=<?= urlencode($sort) ?>&p=<?= $i ?>" class="btn <?= $i === $page_num ? 'btn-primary' : 'btn-secondary' ?> btn-sm" style="min-width: 32px; justify-content: center;">
-                    <?= $i ?>
-                </a>
-            <?php endfor; ?>
+    <?php if ($total_pages > 1 || $limit != 10): ?>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 24px; flex-wrap: wrap; gap: 16px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: var(--radius-md);">
+            <div style="font-size: 13px; color: var(--text-secondary);">
+                Menampilkan <span style="font-weight: 600; color: var(--text-primary);"><?= min($offset + 1, $total_rows) ?></span> - <span style="font-weight: 600; color: var(--text-primary);"><?= min($offset + $limit, $total_rows) ?></span> dari <span style="font-weight: 600; color: var(--text-primary);"><?= number_format($total_rows) ?></span> data
+            </div>
+            
+            <div style="display: flex; gap: 16px; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="font-size: 13px; color: var(--text-secondary); margin: 0;">Tampil:</label>
+                    <select class="form-control" style="width: auto; padding: 4px 30px 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=pegawai&search=<?= urlencode($search) ?>&dept=<?= urlencode($filter_dept) ?>&status=<?= urlencode($filter_status) ?>&sort=<?= urlencode($sort) ?>&limit=' + this.value + '&p=1'">
+                        <?php foreach($allowed_limits as $lim): ?>
+                            <option value="<?= $lim ?>" <?= $limit == $lim ? 'selected' : '' ?>><?= $lim ?> data</option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <?php if ($total_pages > 1): ?>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label style="font-size: 13px; color: var(--text-secondary); margin: 0;">Halaman:</label>
+                        <select class="form-control" style="width: auto; padding: 4px 30px 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=pegawai&search=<?= urlencode($search) ?>&dept=<?= urlencode($filter_dept) ?>&status=<?= urlencode($filter_status) ?>&sort=<?= urlencode($sort) ?>&limit=<?= $limit ?>&p=' + this.value">
+                            <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                                <option value="<?= $i ?>" <?= $i == $page_num ? 'selected' : '' ?>><?= $i ?></option>
+                            <?php endfor; ?>
+                        </select>
+                        <span style="font-size: 13px; color: var(--text-secondary);">dari <?= $total_pages ?></span>
+                    </div>
+                <?php endif; ?>
+            </div>
         </div>
     <?php endif; ?>
 </div>
