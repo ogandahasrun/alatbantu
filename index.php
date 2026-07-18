@@ -289,6 +289,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <a href="index.php?page=manajemen&sub=penggajian" class="<?= ($page === 'manajemen' && $sub === 'penggajian') ? 'active' : '' ?>">
                         <span>• Penggajian</span>
                     </a>
+                    <a href="index.php?page=manajemen&sub=rekap_absensi" class="<?= ($page === 'manajemen' && $sub === 'rekap_absensi') ? 'active' : '' ?>">
+                        <span>• Rekap Absensi</span>
+                    </a>
                     <?php if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true): ?>
                     <a href="index.php?page=manajemen&sub=user" class="<?= ($page === 'manajemen' && $sub === 'user') ? 'active' : '' ?>" style="color: #f59e0b !important;">
                         <span>🔑 Manajemen User</span>

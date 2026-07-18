@@ -116,62 +116,58 @@ if ($result) {
                     <th>No RM</th>
                     <th>Nama Pasien</th>
                     <th>PJ</th>
-                    <th>Kode Barang</th>
-                    <th>Nama Barang</th>
-                    <th>Satuan</th>
-                    <th style="text-align:right;">Jml</th>
-                    <th style="text-align:right;">Total</th>
+                    <th style="text-align:right;">Sub Total Sebelum PPN</th>
                     <th style="text-align:right;">PPN (11%)</th>
+                    <th style="text-align:right;">Total</th>
                 </tr>
             </thead>
             <tbody>
             <?php
-            $no          = 1;
-            $total_jml   = 0;
-            $total_biaya = 0;
-            $total_ppn   = 0;
+            $no             = 1;
+            $grand_subtotal = 0;
+            $grand_ppn      = 0;
+            $grand_total    = 0;
 
             if (empty($data)): ?>
-                <tr><td colspan="12" style="text-align:center; color:var(--text-secondary); padding:30px;">
+                <tr><td colspan="9" style="text-align:center; color:var(--text-secondary); padding:30px;">
                     Tidak ada data untuk rentang tanggal yang dipilih.
                 </td></tr>
             <?php else:
                 foreach ($data as $key => $row):
-                    $rowspan = count($row['obat']);
-                    $first   = true;
+                    $subtotal = 0;
                     foreach ($row['obat'] as $obat):
-                        $total_jml   += $obat['jml'];
-                        $total_biaya += $obat['total'];
-                        $total_ppn   += $obat['total'] * 0.11;
-                        echo '<tr>';
-                        if ($first) {
-                            echo '<td rowspan="'.$rowspan.'">'.$no.'</td>';
-                            echo '<td rowspan="'.$rowspan.'">'.htmlspecialchars($row['tgl_registrasi']).'</td>';
-                            echo '<td rowspan="'.$rowspan.'">'.htmlspecialchars($row['no_rawat']).'</td>';
-                            echo '<td rowspan="'.$rowspan.'">'.htmlspecialchars($row['no_rkm_medis']).'</td>';
-                            echo '<td rowspan="'.$rowspan.'">'.htmlspecialchars($row['nm_pasien']).'</td>';
-                            echo '<td rowspan="'.$rowspan.'">'.htmlspecialchars($row['png_jawab']).'</td>';
-                            $first = false;
-                            $no++;
-                        }
-                        echo '<td>'.htmlspecialchars($obat['kode_brng']).'</td>';
-                        echo '<td>'.htmlspecialchars($obat['nama_brng']).'</td>';
-                        echo '<td>'.htmlspecialchars($obat['kode_sat']).'</td>';
-                        echo '<td style="text-align:right;">'.$obat['jml'].'</td>';
-                        echo '<td style="text-align:right;">'.number_format($obat['total'], 2, ',', '.').'</td>';
-                        echo '<td style="text-align:right;">'.number_format($obat['total'] * 0.11, 2, ',', '.').'</td>';
-                        echo '</tr>';
+                        $subtotal += $obat['total'];
                     endforeach;
+                    
+                    $ppn = $subtotal * 0.11;
+                    $total = $subtotal + $ppn;
+                    
+                    $grand_subtotal += $subtotal;
+                    $grand_ppn      += $ppn;
+                    $grand_total    += $total;
+
+                    echo '<tr>';
+                    echo '<td>'.$no.'</td>';
+                    echo '<td>'.htmlspecialchars($row['tgl_registrasi']).'</td>';
+                    echo '<td>'.htmlspecialchars($row['no_rawat']).'</td>';
+                    echo '<td>'.htmlspecialchars($row['no_rkm_medis']).'</td>';
+                    echo '<td>'.htmlspecialchars($row['nm_pasien']).'</td>';
+                    echo '<td>'.htmlspecialchars($row['png_jawab']).'</td>';
+                    echo '<td style="text-align:right;">'.number_format($subtotal, 2, ',', '.').'</td>';
+                    echo '<td style="text-align:right;">'.number_format($ppn, 2, ',', '.').'</td>';
+                    echo '<td style="text-align:right;">'.number_format($total, 2, ',', '.').'</td>';
+                    echo '</tr>';
+                    $no++;
                 endforeach;
             endif;
             ?>
             </tbody>
             <tfoot>
                 <tr style="font-weight:700; background:var(--bg-secondary);">
-                    <td colspan="9" style="text-align:right; padding:10px;">Total Keseluruhan:</td>
-                    <td style="text-align:right; padding:10px;"><?= number_format($total_jml, 0, ',', '.') ?></td>
-                    <td style="text-align:right; padding:10px;"><?= number_format($total_biaya, 2, ',', '.') ?></td>
-                    <td style="text-align:right; padding:10px;"><?= number_format($total_ppn, 2, ',', '.') ?></td>
+                    <td colspan="6" style="text-align:right; padding:10px;">Total Keseluruhan:</td>
+                    <td style="text-align:right; padding:10px;"><?= number_format($grand_subtotal, 2, ',', '.') ?></td>
+                    <td style="text-align:right; padding:10px;"><?= number_format($grand_ppn, 2, ',', '.') ?></td>
+                    <td style="text-align:right; padding:10px;"><?= number_format($grand_total, 2, ',', '.') ?></td>
                 </tr>
             </tfoot>
         </table>
