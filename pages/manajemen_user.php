@@ -319,6 +319,7 @@ if ($res_tpl) {
         <h3 class="card-title">Daftar Akun Pengguna</h3>
         <form method="GET" style="display: flex; gap: 10px; width: 100%; max-width: 320px;">
             <input type="hidden" name="page" value="manajemen">
+            <input type="hidden" name="sub" value="user">
             <input type="text" name="search" class="form-control" placeholder="Cari NIK atau Nama..." value="<?= htmlspecialchars($search) ?>">
             <button type="submit" class="btn btn-secondary btn-sm" style="padding: 10px 14px;">Cari</button>
         </form>
@@ -404,7 +405,7 @@ if ($res_tpl) {
     <?php if ($total_pages > 1): ?>
         <div style="display: flex; justify-content: center; gap: 8px; margin-top: 24px;">
             <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <a href="index.php?page=manajemen&search=<?= urlencode($search) ?>&p=<?= $i ?>" class="btn <?= $i === $page_num ? 'btn-primary' : 'btn-secondary' ?> btn-sm" style="min-width: 32px; justify-content: center;">
+                <a href="index.php?page=manajemen&sub=user&search=<?= urlencode($search) ?>&p=<?= $i ?>" class="btn <?= $i === $page_num ? 'btn-primary' : 'btn-secondary' ?> btn-sm" style="min-width: 32px; justify-content: center;">
                     <?= $i ?>
                 </a>
             <?php endfor; ?>

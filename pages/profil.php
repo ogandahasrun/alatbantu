@@ -13,9 +13,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Content-Type: application/json');
         
         $vector_json = $_POST['vector'] ?? '';
+        $photo_b64 = $_POST['photo'] ?? '';
         if (empty($vector_json)) {
             echo json_encode(['success' => false, 'message' => 'Data wajah (vektor) kosong!']);
             exit;
+        }
+        
+        // Handle photo save
+        if (!empty($photo_b64)) {
+            $image_parts = explode(";base64,", $photo_b64);
+            if (count($image_parts) == 2) {
+                $image_base64 = base64_decode($image_parts[1]);
+                $photo_filename = 'photo_' . preg_replace('/[^A-Za-z0-9_-]/', '', $nik) . '.jpg';
+                $upload_dir = 'assets/photos/';
+                if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
+                if (file_put_contents($upload_dir . $photo_filename, $image_base64)) {
+                    $koneksi->query("UPDATE pegawai SET photo = '$photo_filename' WHERE nik = '" . $koneksi->real_escape_string($nik) . "'");
+                }
+            }
         }
 
         // Simpan atau timpa data wajah (ON DUPLICATE KEY UPDATE)
@@ -23,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt_face) {
             $stmt_face->bind_param("ss", $nik, $vector_json);
             if ($stmt_face->execute()) {
-                echo json_encode(['success' => true, 'message' => 'Data wajah berhasil direkam!']);
+                echo json_encode(['success' => true, 'message' => 'Data wajah dan foto berhasil direkam!']);
             } else {
                 echo json_encode(['success' => false, 'message' => 'Gagal menyimpan wajah: ' . $koneksi->error]);
             }
@@ -82,20 +97,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Cek apakah data wajah sudah ada
+// Cek status pendaftaran wajah
 $face_registered = false;
 $face_date = '';
-$stmt_check_face = $koneksi->prepare("SELECT created_at FROM face_vector WHERE nik = ? LIMIT 1");
-if ($stmt_check_face) {
-    $stmt_check_face->bind_param("s", $nik);
-    $stmt_check_face->execute();
-    $res_face = $stmt_check_face->get_result();
-    if ($row_face = $res_face->fetch_assoc()) {
-        $face_registered = true;
-        $face_date = date('d F Y H:i', strtotime($row_face['created_at']));
-    }
-    $stmt_check_face->close();
+$q_face = $koneksi->query("SELECT created_at FROM face_vector WHERE nik = '" . $koneksi->real_escape_string($nik) . "' LIMIT 1");
+if ($q_face && $q_face->num_rows > 0) {
+    $face_registered = true;
+    $d = $q_face->fetch_assoc();
+    $face_date = date('d-m-Y H:i', strtotime($d['created_at']));
 }
+
+// Fetch Pegawai Data for Photo
+$q_peg = $koneksi->query("SELECT nama, photo FROM pegawai WHERE nik = '" . $koneksi->real_escape_string($nik) . "' LIMIT 1");
+$d_peg = ($q_peg && $q_peg->num_rows > 0) ? $q_peg->fetch_assoc() : null;
+$photo_url = ($d_peg && !empty($d_peg['photo']) && file_exists('assets/photos/'.$d_peg['photo'])) ? 'assets/photos/'.$d_peg['photo'] : '';
 ?>
 
 <div class="page-header">
@@ -128,8 +143,12 @@ if ($stmt_check_face) {
         </h2>
 
         <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-md);">
-            <div style="font-size: 28px;">
-                <?= $face_registered ? '🔒' : '🔓' ?>
+            <div style="font-size: 28px; display: flex; align-items: center; justify-content: center; width: 50px; height: 50px; border-radius: 50%; background: #e2e8f0; overflow: hidden;">
+                <?php if ($photo_url): ?>
+                    <img src="<?= $photo_url ?>?v=<?= time() ?>" alt="Profil" style="width: 100%; height: 100%; object-fit: cover;">
+                <?php else: ?>
+                    <?= $face_registered ? '🔒' : '🔓' ?>
+                <?php endif; ?>
             </div>
             <div>
                 <div style="font-size: 14px; font-weight: 700; color: var(--text-primary);">
@@ -235,7 +254,6 @@ if ($stmt_check_face) {
         loadingText.innerText = "Memuat Model AI Wajah...";
         
         try {
-            // Path models relative to index.php
             await faceapi.nets.ssdMobilenetv1.loadFromUri('assets/models');
             await faceapi.nets.faceLandmark68Net.loadFromUri('assets/models');
             await faceapi.nets.faceRecognitionNet.loadFromUri('assets/models');
@@ -264,7 +282,6 @@ if ($stmt_check_face) {
         const placeholder = document.getElementById('cameraPlaceholder');
         const btnRecord = document.getElementById('btnRecord');
 
-        // Load models first
         const ok = await loadModels();
         if (!ok) return;
 
@@ -276,7 +293,6 @@ if ($stmt_check_face) {
             placeholder.style.display = 'none';
             btnRecord.style.display = 'inline-flex';
 
-            // Real-time canvas drawing overlay for guide
             video.addEventListener('play', () => {
                 const canvas = document.getElementById('overlayCanvas');
                 const displaySize = { width: video.clientWidth, height: video.clientHeight };
@@ -290,7 +306,6 @@ if ($stmt_check_face) {
                     
                     if (detections) {
                         const resizedDetections = faceapi.resizeResults(detections, displaySize);
-                        // Draw box guide nicely
                         const box = resizedDetections.detection.box;
                         context.strokeStyle = '#3b82f6';
                         context.lineWidth = 3;
@@ -301,7 +316,7 @@ if ($stmt_check_face) {
 
         } catch (err) {
             console.error(err);
-            alert("Gagal membuka kamera: " + err.message + "\nPastikan Anda mengizinkan akses kamera dan koneksi HTTPS.");
+            alert("Gagal membuka kamera: " + err.message + "\nPastikan Anda mengizinkan akses kamera.");
         }
     }
 
@@ -319,7 +334,6 @@ if ($stmt_check_face) {
         loadingOverlay.style.display = 'flex';
         loadingText.innerText = "Mendeteksi & Merekam Wajah...";
 
-        // Wait a tiny bit to make sure scan is stable
         setTimeout(async () => {
             try {
                 const detection = await faceapi.detectSingleFace(video)
@@ -327,19 +341,24 @@ if ($stmt_check_face) {
                     .withFaceDescriptor();
 
                 if (!detection) {
-                    alert("Wajah tidak terdeteksi! Coba posisikan wajah Anda tepat di tengah dan tidak terlalu jauh.");
+                    alert("Wajah tidak terdeteksi!");
                     loadingOverlay.style.display = 'none';
                     return;
                 }
 
-                // Get descriptor array (128 floats)
                 const descriptorArray = Array.from(detection.descriptor);
                 const vectorJson = JSON.stringify(descriptorArray);
 
-                // Send via AJAX to save_face_vector
+                const snapshotCanvas = document.createElement('canvas');
+                snapshotCanvas.width = video.videoWidth;
+                snapshotCanvas.height = video.videoHeight;
+                snapshotCanvas.getContext('2d').drawImage(video, 0, 0, snapshotCanvas.width, snapshotCanvas.height);
+                const dataUrl = snapshotCanvas.toDataURL('image/jpeg', 0.7); // Kompresi kualitas JPEG
+
                 const formData = new FormData();
                 formData.append('action', 'save_face_vector');
                 formData.append('vector', vectorJson);
+                formData.append('photo', dataUrl);
 
                 const response = await fetch(window.location.href, {
                     method: 'POST',
@@ -379,35 +398,54 @@ if ($stmt_check_face) {
 
         const reader = new FileReader();
         reader.onload = function(e) {
-            previewImg.src = e.target.result;
-            previewImg.style.display = 'block';
-            video.style.display = 'none';
-            placeholder.style.display = 'none';
-            overlayCanvas.style.display = 'none';
+            const img = new Image();
+            img.onload = async () => {
+                previewImg.src = img.src;
+                previewImg.style.display = 'block';
+                video.style.display = 'none';
+                placeholder.style.display = 'none';
+                overlayCanvas.style.display = 'none';
 
-            previewImg.onload = async function() {
                 try {
                     loadingText.innerText = "Mendeteksi & Merekam Wajah (AI)...";
-                    
-                    // Detect face descriptor
-                    const detection = await faceapi.detectSingleFace(previewImg)
+                    const detection = await faceapi.detectSingleFace(img)
                         .withFaceLandmarks()
                         .withFaceDescriptor();
 
                     if (!detection) {
-                        alert("Wajah tidak terdeteksi! Mohon ambil foto selfie ulang dengan wajah tegak menghadap kamera dan pencahayaan yang cukup.");
+                        alert("Wajah tidak terdeteksi pada foto.");
                         resetFallbackUI();
                         return;
                     }
 
-                    // Get descriptor array (128 floats)
                     const descriptorArray = Array.from(detection.descriptor);
                     const vectorJson = JSON.stringify(descriptorArray);
+                    
+                    // Resize foto fallback agar ukurannya tidak raksasa
+                    const snapshotCanvas = document.createElement('canvas');
+                    let targetWidth = img.width;
+                    let targetHeight = img.height;
+                    const maxSize = 800; // maksimal resolusi 800px
 
-                    // Send via AJAX to save_face_vector
+                    if (targetWidth > maxSize || targetHeight > maxSize) {
+                        if (targetWidth > targetHeight) {
+                            targetHeight = (targetHeight / targetWidth) * maxSize;
+                            targetWidth = maxSize;
+                        } else {
+                            targetWidth = (targetWidth / targetHeight) * maxSize;
+                            targetHeight = maxSize;
+                        }
+                    }
+
+                    snapshotCanvas.width = targetWidth;
+                    snapshotCanvas.height = targetHeight;
+                    snapshotCanvas.getContext('2d').drawImage(img, 0, 0, targetWidth, targetHeight);
+                    const dataUrl = snapshotCanvas.toDataURL('image/jpeg', 0.7); // Kompresi kualitas JPEG
+
                     const formData = new FormData();
                     formData.append('action', 'save_face_vector');
                     formData.append('vector', vectorJson);
+                    formData.append('photo', dataUrl);
 
                     const response = await fetch(window.location.href, {
                         method: 'POST',
@@ -430,6 +468,7 @@ if ($stmt_check_face) {
                     loadingOverlay.style.display = 'none';
                 }
             };
+            img.src = e.target.result; // This is the crucial missing line!
         };
         reader.readAsDataURL(file);
     }

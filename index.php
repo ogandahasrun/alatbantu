@@ -93,6 +93,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             include 'pages/pegawai_absensi.php';
             exit;
         }
+        if ($page === 'profil' && isset($_POST['action']) && $_POST['action'] === 'save_face_vector') {
+            include 'pages/profil.php';
+            exit;
+        }
     }
 }
 ?>
