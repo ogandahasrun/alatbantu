@@ -8,7 +8,7 @@ if (isset($_GET['ajax_search_pegawai'])) {
     $res = [];
     if (strlen($val) >= 2) {
         $q = "%$val%";
-        $stmt = $koneksi->prepare("SELECT nik, nama FROM pegawai WHERE nama LIKE ? OR nik LIKE ? LIMIT 10");
+        $stmt = $koneksi->prepare("SELECT nik, nama FROM pegawai WHERE stts_aktif = 'AKTIF' AND (nama LIKE ? OR nik LIKE ?) LIMIT 10");
         $stmt->bind_param("ss", $q, $q);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -176,15 +176,25 @@ if ($peg_id > 0) {
     <?php if (empty($nik_peg)): ?>
         <?php
         $search_list = $_GET['search_list'] ?? '';
+        $allowed_limits = [10 => '10 data', 15 => '15 data', 25 => '25 data', 50 => '50 data', 100 => '100 data', 250 => '250 data', 'semua' => 'Semua'];
+        $limit_param = $_GET['limit'] ?? '15';
+        if ($limit_param === 'semua') {
+            $limit = 9999999;
+        } else {
+            $limit = (int)$limit_param;
+            if (!array_key_exists($limit, $allowed_limits)) {
+                $limit = 15;
+                $limit_param = 15;
+            }
+        }
         $page_num = isset($_GET['p']) ? max(1, (int)$_GET['p']) : 1;
-        $limit = 15;
-        $offset = ($page_num - 1) * $limit;
+        $offset = ($page_num - 1) * ($limit === 9999999 ? 1000 : $limit);
         
-        $where = "";
+        $where = "WHERE stts_aktif = 'AKTIF'";
         $params = [];
         $types = "";
         if (!empty($search_list)) {
-            $where = "WHERE nama LIKE ? OR nik LIKE ?";
+            $where .= " AND (nama LIKE ? OR nik LIKE ?)";
             $q = "%$search_list%";
             $params = [$q, $q];
             $types = "ss";
@@ -193,17 +203,21 @@ if ($peg_id > 0) {
         // Count total
         $q_count = "SELECT COUNT(id) as total FROM pegawai $where";
         $stmt_c = $koneksi->prepare($q_count);
-        if ($where) $stmt_c->bind_param($types, ...$params);
+        if (!empty($params)) $stmt_c->bind_param($types, ...$params);
         $stmt_c->execute();
         $total_peg = $stmt_c->get_result()->fetch_assoc()['total'];
         $stmt_c->close();
         
         $total_pages = ceil($total_peg / $limit);
         if ($total_pages < 1) $total_pages = 1;
+        if ($page_num > $total_pages) {
+            $page_num = $total_pages;
+            $offset = ($page_num - 1) * $limit;
+        }
         
         $q_list = "SELECT id, nik, nama, departemen FROM pegawai $where ORDER BY nama ASC LIMIT $limit OFFSET $offset";
         $stmt_l = $koneksi->prepare($q_list);
-        if ($where) $stmt_l->bind_param($types, ...$params);
+        if (!empty($params)) $stmt_l->bind_param($types, ...$params);
         $stmt_l->execute();
         $res_list = $stmt_l->get_result();
         
@@ -335,20 +349,27 @@ if ($peg_id > 0) {
         }
         ?>
 
-        <div style="margin-bottom: 20px; display: flex; gap: 10px; justify-content: space-between; align-items: center;">
-            <h3 style="margin: 0; font-size: 16px; color: var(--text-primary);">Daftar Pegawai</h3>
+        <div style="margin-bottom: 20px; display: flex; gap: 10px; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <h3 style="margin: 0; font-size: 16px; color: var(--text-primary);">Daftar Pegawai</h3>
+                <button type="button" onclick="copyTableToClipboard('tabelRekapAbsensi')" class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
+                    <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                    Copy to Clipboard
+                </button>
+            </div>
             <form method="GET" style="display: flex; gap: 10px; width: 100%; max-width: 300px;">
                 <input type="hidden" name="page" value="manajemen">
                 <input type="hidden" name="sub" value="rekap_absensi">
                 <input type="hidden" name="bulan" value="<?= htmlspecialchars($bulan) ?>">
                 <input type="hidden" name="tahun" value="<?= htmlspecialchars($tahun) ?>">
+                <input type="hidden" name="limit" value="<?= htmlspecialchars($limit_param) ?>">
                 <input type="text" name="search_list" class="form-control" placeholder="Cari nama / NIK..." value="<?= htmlspecialchars($search_list) ?>">
                 <button type="submit" class="btn btn-secondary">Cari</button>
             </form>
         </div>
 
         <div class="table-responsive">
-            <table class="table-custom">
+            <table class="table-custom" id="tabelRekapAbsensi">
                 <thead>
                     <tr>
                         <th>NIK</th>
@@ -370,10 +391,10 @@ if ($peg_id > 0) {
                         <td><?= htmlspecialchars($p['nik']) ?></td>
                         <td><strong><?= htmlspecialchars($p['nama']) ?></strong></td>
                         <td><?= htmlspecialchars($p['departemen'] ?? '-') ?></td>
-                        <td style="text-align: center; color: #059669; font-weight: bold;"><?= $rd['hadir'] ?> x</td>
-                        <td style="text-align: center; color: #ea580c; font-weight: bold;"><?= $rd['telat'] ?> x</td>
-                        <td style="text-align: center; color: #d97706; font-weight: bold;"><?= $rd['cepat'] ?> x</td>
-                        <td style="text-align: center; color: #dc2626; font-weight: bold;"><?= $rd['alfa'] ?> x</td>
+                        <td style="text-align: center; color: #059669; font-weight: bold;"><?= $rd['hadir'] ?></td>
+                        <td style="text-align: center; color: #ea580c; font-weight: bold;"><?= $rd['telat'] ?></td>
+                        <td style="text-align: center; color: #d97706; font-weight: bold;"><?= $rd['cepat'] ?></td>
+                        <td style="text-align: center; color: #dc2626; font-weight: bold;"><?= $rd['alfa'] ?></td>
                         <td style="text-align: center;">
                             <a href="index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&nik_pegawai=<?= urlencode($p['nik']) ?>" class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; text-decoration: none;">Lihat Rekap</a>
                         </td>
@@ -386,26 +407,43 @@ if ($peg_id > 0) {
             </table>
         </div>
         
-        <?php if ($total_pages > 1): ?>
-        <div style="margin-top: 15px; display: flex; gap: 5px; justify-content: center; flex-wrap: wrap;">
-            <?php for($i = 1; $i <= $total_pages; $i++): 
-                if ($i == 1 || $i == $total_pages || ($i >= $page_num - 2 && $i <= $page_num + 2)):
-            ?>
-                <a href="index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&search_list=<?= urlencode($search_list) ?>&p=<?= $i ?>" class="btn <?= $i === $page_num ? 'btn-primary' : 'btn-secondary' ?>" style="padding: 5px 10px; text-decoration: none;"><?= $i ?></a>
-            <?php 
-                elseif ($i == $page_num - 3 || $i == $page_num + 3):
-                    echo "<span style='padding: 5px; color: var(--text-secondary);'>...</span>";
-                endif;
-            endfor; ?>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; flex-wrap: wrap; gap: 15px; padding: 12px 16px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;">
+            <div style="font-size: 13px; color: var(--text-secondary);">
+                Menampilkan <span style="font-weight: 600; color: var(--text-primary);"><?= $total_peg > 0 ? $offset + 1 : 0 ?></span> - <span style="font-weight: 600; color: var(--text-primary);"><?= min($offset + $limit, $total_peg) ?></span> dari <span style="font-weight: 600; color: var(--text-primary);"><?= number_format($total_peg) ?></span> data
+            </div>
+            
+            <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="font-size: 13px; color: var(--text-secondary); margin: 0;">Tampil:</label>
+                    <select class="form-control" style="width: auto; padding: 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&search_list=<?= urlencode($search_list) ?>&limit=' + this.value + '&p=1'">
+                        <?php foreach($allowed_limits as $val => $label): ?>
+                            <option value="<?= $val ?>" <?= (string)$limit_param === (string)$val ? 'selected' : '' ?>><?= $label ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="font-size: 13px; color: var(--text-secondary); margin: 0;">Ke Halaman:</label>
+                    <select class="form-control" style="width: auto; padding: 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&search_list=<?= urlencode($search_list) ?>&limit=<?= urlencode($limit_param) ?>&p=' + this.value">
+                        <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                            <option value="<?= $i ?>" <?= $i == $page_num ? 'selected' : '' ?>><?= $i ?></option>
+                        <?php endfor; ?>
+                    </select>
+                    <span style="font-size: 13px; color: var(--text-secondary);">dari <?= $total_pages ?></span>
+                </div>
+            </div>
         </div>
-        <?php endif; ?>
 
     <?php else: ?>
-        <div style="margin-bottom: 20px;">
-            <a href="index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>" class="btn btn-secondary" style="text-decoration: none;">&larr; Kembali ke Daftar Pegawai</a>
+        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <a href="index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&limit=<?= urlencode($limit_param) ?>" class="btn btn-secondary" style="text-decoration: none;">&larr; Kembali ke Daftar Pegawai</a>
+            <button type="button" onclick="copyTableToClipboard('tabelDetailAbsensi')" class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                Copy to Clipboard
+            </button>
         </div>
         <div class="table-responsive">
-            <table class="table-custom">
+            <table class="table-custom" id="tabelDetailAbsensi">
                 <thead>
                     <tr>
                         <th style="width: 80px;">Tanggal</th>
@@ -531,4 +569,27 @@ document.addEventListener('click', function(e) {
         document.getElementById('pegawai-suggestions').style.display = 'none';
     }
 });
+
+function copyTableToClipboard(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    
+    const range = document.createRange();
+    range.selectNode(table);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            alert('✅ Data tabel berhasil disalin ke clipboard!');
+        } else {
+            alert('⚠️ Gagal menyalin tabel.');
+        }
+    } catch (err) {
+        alert('⚠️ Gagal menyalin: ' + err);
+    }
+    selection.removeAllRanges();
+}
 </script>
