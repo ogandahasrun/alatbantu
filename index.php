@@ -27,21 +27,25 @@ if ($result_instansi && $row_instansi = mysqli_fetch_assoc($result_instansi)) {
 // Fetch page permissions for the logged-in user from hak_akses
 // Admin utama selalu mendapat akses penuh ke semua menu tanpa perlu cek tabel hak_akses
 $all_permissions = [
-    'dashboard' => '1',
-    'manajemen' => '1',
-    'dokter'    => '1',
-    'pegawai'   => '1',
-    'kasir'     => '1',
-    'keuangan'  => '1'
+    'dashboard'     => '1',
+    'manajemen'     => '1',
+    'dokter'        => '1',
+    'pegawai'       => '1',
+    'kasir'         => '1',
+    'keuangan'      => '1',
+    'surat_masuk'   => '1',
+    'surat_menyurat'=> '1'
 ];
 
 $user_permissions = [
-    'dashboard' => '1',
-    'manajemen' => '0',
-    'dokter'    => '0',
-    'pegawai'   => '0',
-    'kasir'     => '0',
-    'keuangan'  => '0'
+    'dashboard'     => '1',
+    'manajemen'     => '0',
+    'dokter'        => '0',
+    'pegawai'       => '0',
+    'kasir'         => '0',
+    'keuangan'      => '0',
+    'surat_masuk'   => '0',
+    'surat_menyurat'=> '0'
 ];
 
 $nik_logged = $_SESSION['username'];
@@ -50,7 +54,7 @@ if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true) {
     // Admin utama → akses penuh, tidak perlu query hak_akses
     $user_permissions = $all_permissions;
 } else {
-    $stmt_akses = $koneksi->prepare("SELECT dashboard, manajemen, dokter, pegawai, kasir, keuangan FROM hak_akses WHERE nik = ?");
+    $stmt_akses = $koneksi->prepare("SELECT dashboard, manajemen, dokter, pegawai, kasir, keuangan, surat_masuk, surat_menyurat FROM hak_akses WHERE nik = ?");
     if ($stmt_akses) {
         $stmt_akses->bind_param("s", $nik_logged);
         $stmt_akses->execute();
@@ -59,7 +63,7 @@ if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true) {
             $user_permissions = $row_akses;
         } else {
             // Otomatis inisialisasi hak akses default jika belum ada
-            $stmt_init = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan) VALUES (?, '1', '0', '0', '0', '0', '0')");
+            $stmt_init = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan, surat_masuk, surat_menyurat) VALUES (?, '1', '0', '0', '0', '0', '0', '0', '0')");
             if ($stmt_init) {
                 $stmt_init->bind_param("s", $nik_logged);
                 $stmt_init->execute();
@@ -70,17 +74,25 @@ if (isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true) {
     }
 }
 
+// Backward-compatibility fallback: jika punya surat_masuk maka otomatis punya surat_menyurat
+if (isset($user_permissions['surat_masuk']) && $user_permissions['surat_masuk'] === '1') {
+    $user_permissions['surat_menyurat'] = '1';
+}
+
 // Router Page Configuration
 $page = isset($_GET['page']) ? $_GET['page'] : 'dashboard';
 $sub = isset($_GET['sub']) ? $_GET['sub'] : '';
-$allowed_pages = ['dashboard', 'manajemen', 'dokter', 'pegawai', 'kasir', 'keuangan', 'profil'];
+$allowed_pages = ['dashboard', 'manajemen', 'dokter', 'pegawai', 'kasir', 'keuangan', 'profil', 'surat_masuk', 'surat_keluar', 'surat_menyurat'];
 
 if (!in_array($page, $allowed_pages)) {
     $page = 'dashboard';
 }
 
 // Halaman profil dapat diakses oleh semua user yang telah login
-$has_access = ($page === 'profil') || (isset($user_permissions[$page]) && $user_permissions[$page] === '1');
+$has_access = ($page === 'profil') 
+    || (isset($user_permissions[$page]) && $user_permissions[$page] === '1')
+    || ($page === 'surat_menyurat' && ((isset($user_permissions['surat_menyurat']) && $user_permissions['surat_menyurat'] === '1') || (isset($user_permissions['surat_masuk']) && $user_permissions['surat_masuk'] === '1')))
+    || ($page === 'surat_keluar' && ((isset($user_permissions['surat_menyurat']) && $user_permissions['surat_menyurat'] === '1') || (isset($user_permissions['surat_masuk']) && $user_permissions['surat_masuk'] === '1')));
 
 // Intercept AJAX requests before HTML output
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -270,6 +282,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <span>Profil Saya</span>
             </a>
 
+            <?php if ((isset($user_permissions['surat_menyurat']) && $user_permissions['surat_menyurat'] === '1') || (isset($user_permissions['surat_masuk']) && $user_permissions['surat_masuk'] === '1')): ?>
+            <div class="menu-group <?= ($page === 'surat_menyurat' || $page === 'surat_masuk' || $page === 'surat_keluar') ? 'active' : '' ?>">
+                <div class="menu-group-header">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                    <span>Surat Menyurat</span>
+                </div>
+                <div class="menu-group-items">
+                    <a href="index.php?page=surat_menyurat&sub=surat_masuk" class="<?= ($page === 'surat_masuk' || ($page === 'surat_menyurat' && ($sub === 'surat_masuk' || empty($sub)))) ? 'active' : '' ?>">
+                        <span>• Surat Masuk</span>
+                    </a>
+                    <a href="index.php?page=surat_menyurat&sub=surat_keluar" class="<?= ($page === 'surat_keluar' || ($page === 'surat_menyurat' && $sub === 'surat_keluar')) ? 'active' : '' ?>">
+                        <span>• Surat Keluar</span>
+                    </a>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <?php if (isset($user_permissions['manajemen']) && $user_permissions['manajemen'] === '1'): ?>
             <div class="menu-group <?= $page === 'manajemen' ? 'active' : '' ?>">
                 <div class="menu-group-header">
@@ -422,7 +451,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <a href='index.php?page=dashboard' class='btn btn-primary'>Kembali ke Dashboard</a>
             </div>";
         } else {
-            include "pages/{$page}.php"; 
+            if ($page === 'surat_menyurat') {
+                if ($sub === 'surat_keluar') {
+                    include 'pages/surat_keluar.php';
+                } else {
+                    include 'pages/surat_masuk.php';
+                }
+            } else {
+                include "pages/{$page}.php"; 
+            }
         }
         ?>
     </main>
@@ -446,6 +483,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                     <span>Profil Saya</span>
                 </a>
+
+                <?php if ((isset($user_permissions['surat_menyurat']) && $user_permissions['surat_menyurat'] === '1') || (isset($user_permissions['surat_masuk']) && $user_permissions['surat_masuk'] === '1')): ?>
+                <a href="index.php?page=surat_menyurat&sub=surat_masuk" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                    <span>Surat Masuk</span>
+                </a>
+                <a href="index.php?page=surat_menyurat&sub=surat_keluar" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    <span>Surat Keluar</span>
+                </a>
+                <?php endif; ?>
                 
                 <?php if (isset($user_permissions['manajemen']) && $user_permissions['manajemen'] === '1'): ?>
                 <a href="index.php?page=manajemen&sub=pegawai" class="drawer-item" onclick="closeDrawerMenu(event)">
