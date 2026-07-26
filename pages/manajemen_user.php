@@ -124,15 +124,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $manajemen = isset($_POST['manajemen']) ? '1' : '0';
         $dokter    = isset($_POST['dokter'])    ? '1' : '0';
         $pegawai   = isset($_POST['pegawai'])   ? '1' : '0';
-        $kasir          = isset($_POST['kasir'])          ? '1' : '0';
-        $keuangan       = isset($_POST['keuangan'])       ? '1' : '0';
-        $surat_menyurat = isset($_POST['surat_menyurat']) ? '1' : '0';
-        $surat_masuk    = $surat_menyurat; // fallback sync
+        $kasir       = isset($_POST['kasir'])       ? '1' : '0';
+        $keuangan    = isset($_POST['keuangan'])    ? '1' : '0';
+        $surat_masuk  = isset($_POST['surat_masuk'])  ? '1' : '0';
+        $surat_keluar = isset($_POST['surat_keluar']) ? '1' : '0';
 
         if (!empty($nik)) {
-            $stmt_up_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan, surat_masuk, surat_menyurat) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE dashboard = ?, manajemen = ?, dokter = ?, pegawai = ?, kasir = ?, keuangan = ?, surat_masuk = ?, surat_menyurat = ?");
+            $stmt_up_hak = $koneksi->prepare("INSERT INTO hak_akses (nik, dashboard, manajemen, dokter, pegawai, kasir, keuangan, surat_masuk, surat_keluar) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE dashboard = ?, manajemen = ?, dokter = ?, pegawai = ?, kasir = ?, keuangan = ?, surat_masuk = ?, surat_keluar = ?");
             if ($stmt_up_hak) {
-                $stmt_up_hak->bind_param("sssssssssssssssss", $nik, $dashboard, $manajemen, $dokter, $pegawai, $kasir, $keuangan, $surat_masuk, $surat_menyurat, $dashboard, $manajemen, $dokter, $pegawai, $kasir, $keuangan, $surat_masuk, $surat_menyurat);
+                $stmt_up_hak->bind_param("sssssssssssssssss", $nik, $dashboard, $manajemen, $dokter, $pegawai, $kasir, $keuangan, $surat_masuk, $surat_keluar, $dashboard, $manajemen, $dokter, $pegawai, $kasir, $keuangan, $surat_masuk, $surat_keluar);
                 if ($stmt_up_hak->execute()) {
                     $success_msg = "Hak akses menu untuk user $nik berhasil diperbarui.";
                 } else {
@@ -260,7 +260,7 @@ $query = "SELECT
             h.kasir,
             h.keuangan,
             h.surat_masuk,
-            h.surat_menyurat
+            h.surat_keluar
           FROM user u
           LEFT JOIN pegawai p ON p.nik = aes_decrypt(u.id_user, 'nur')
           LEFT JOIN hak_akses h ON h.nik = aes_decrypt(u.id_user, 'nur')";
@@ -546,8 +546,13 @@ if ($res_tpl) {
                         </label>
 
                         <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;">
-                            <input type="checkbox" id="access_chk_surat_menyurat" name="surat_menyurat" value="1" style="width:18px; height:18px;">
-                            <strong>Surat Menyurat</strong> (Akses menu Surat Masuk & Surat Keluar bertingkat)
+                            <input type="checkbox" id="access_chk_surat_masuk" name="surat_masuk" value="1" style="width:18px; height:18px;">
+                            <strong>Surat Masuk</strong> (Akses sub-menu Surat Masuk & disposisi bertingkat)
+                        </label>
+
+                        <label style="display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;">
+                            <input type="checkbox" id="access_chk_surat_keluar" name="surat_keluar" value="1" style="width:18px; height:18px;">
+                            <strong>Surat Keluar</strong> (Akses sub-menu Surat Keluar & persetujuan bertingkat)
                         </label>
                     </div>
                 </div>
@@ -627,9 +632,10 @@ function openEditAccessModal(u) {
     document.getElementById('access_chk_manajemen').checked = (u.manajemen === '1');
     document.getElementById('access_chk_dokter').checked    = (u.dokter    === '1');
     document.getElementById('access_chk_pegawai').checked   = (u.pegawai   === '1');
-    document.getElementById('access_chk_kasir').checked          = (u.kasir          === '1');
-    document.getElementById('access_chk_keuangan').checked       = (u.keuangan       === '1');
-    document.getElementById('access_chk_surat_menyurat').checked = (u.surat_menyurat === '1' || u.surat_masuk === '1');
+    document.getElementById('access_chk_kasir').checked        = (u.kasir        === '1');
+    document.getElementById('access_chk_keuangan').checked     = (u.keuangan     === '1');
+    document.getElementById('access_chk_surat_masuk').checked  = (u.surat_masuk  === '1');
+    document.getElementById('access_chk_surat_keluar').checked = (u.surat_keluar === '1');
     
     openModal('editAccessModal');
 }
