@@ -97,8 +97,12 @@ $has_access = ($page === 'profil')
     || ($page === 'surat_keluar' && $has_access_surat_keluar);
 
 // Intercept AJAX requests before HTML output
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (isset($_GET['ajax_action']) || $_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($has_access) {
+        if ($page === 'surat_keluar' && isset($_GET['ajax_action'])) {
+            include 'pages/surat_keluar.php';
+            exit;
+        }
         if ($page === 'manajemen' && $sub === 'pegawai' && isset($_POST['ajax_action'])) {
             include 'pages/manajemen_pegawai.php';
             exit;

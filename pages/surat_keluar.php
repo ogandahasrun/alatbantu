@@ -18,75 +18,69 @@ if ($res_peg) {
     }
 }
 
-// ── 2. AMBIL MASTER FORMAT PENOMORAN (surat_keluar_set_nomor) ───────────────
-$set_nomor_list = [];
-$res_sn = $koneksi->query("SELECT * FROM surat_keluar_set_nomor ORDER BY jenis_surat ASC");
-if ($res_sn) {
-    while ($row_sn = $res_sn->fetch_assoc()) {
-        $set_nomor_list[] = $row_sn;
+// ── 2. AMBIL MASTER KLASIFIKASI SURAT (surat_klasifikasi) ───────────────────
+$klasifikasi_list = [];
+$res_k = $koneksi->query("SELECT k.kd, k.klasifikasi, sk.kd as kd_sub, sk.sub_klasifikasi FROM surat_klasifikasi k LEFT JOIN surat_sub_klasifikasi sk ON k.kd = sk.kd_klasifikasi ORDER BY k.klasifikasi ASC");
+if ($res_k) {
+    while ($row_k = $res_k->fetch_assoc()) {
+        $klasifikasi_list[] = $row_k;
     }
 }
 
-// ── 3. HELPER DYNAMIC GENERATE NO SURAT ─────────────────────────────────────
-function buildGeneratedNoSurat($koneksi, $rule_row, $tgl_surat) {
+// ── 3. HELPER DYNAMIC GENERATE NO SURAT VIA SURAT_KLASIFIKASI ───────────────
+function buildGeneratedNoSuratByKlasifikasi($koneksi, $kd_klasifikasi, $tgl_surat) {
     if (empty($tgl_surat)) $tgl_surat = date('Y-m-d');
     $time = strtotime($tgl_surat);
     $month_num = (int)date('m', $time);
     $year_num  = date('Y', $time);
-    $day_num   = date('d', $time);
 
     $romawi_map = [1=>'I', 2=>'II', 3=>'III', 4=>'IV', 5=>'V', 6=>'VI', 7=>'VII', 8=>'VIII', 9=>'IX', 10=>'X', 11=>'XI', 12=>'XII'];
     $bulan_romawi = $romawi_map[$month_num] ?? 'I';
 
-    // No Urut Bulanan
-    $m_start = date('Y-m-01', $time);
-    $m_end   = date('Y-m-t', $time);
-    $res_m = $koneksi->query("SELECT COUNT(*) as total FROM surat_keluar WHERE tgl_kirim BETWEEN '$m_start' AND '$m_end'");
-    $no_bulanan = str_pad(($res_m ? (int)$res_m->fetch_assoc()['total'] + 1 : 1), 3, '0', STR_PAD_LEFT);
+    $kd_esc = $koneksi->real_escape_string($kd_klasifikasi);
 
-    // No Urut Tahunan
-    $y_start = date('Y-01-01', $time);
-    $y_end   = date('Y-12-31', $time);
-    $res_y = $koneksi->query("SELECT COUNT(*) as total FROM surat_keluar WHERE tgl_kirim BETWEEN '$y_start' AND '$y_end'");
-    $no_tahunan = str_pad(($res_y ? (int)$res_y->fetch_assoc()['total'] + 1 : 1), 3, '0', STR_PAD_LEFT);
-
-    // Singkatan Instansi / Organisasi (misal: RSUD)
-    $singkatan_instansi = 'RSUD';
-
-    // Ambil default kode klasifikasi & sub klasifikasi dari database master
-    $res_k = $koneksi->query("SELECT kd FROM surat_klasifikasi LIMIT 1");
-    $kd_klasifikasi = ($res_k && $row_k = $res_k->fetch_assoc()) ? $row_k['kd'] : '045';
-
-    $res_sk = $koneksi->query("SELECT kd FROM surat_sub_klasifikasi LIMIT 1");
-    $kd_sub_klasifikasi = $singkatan_instansi; // Menggunakan singkatan organisasi RSUD
-
-    $result = '';
-    for ($i = 1; $i <= 15; $i++) {
-        $val = $rule_row["digit_$i"] ?? '';
-        if (empty($val)) continue;
-
-        switch ($val) {
-            case 'No Urut Bulanan': $result .= $no_bulanan; break;
-            case 'No Urut Tahunan': $result .= $no_tahunan; break;
-            case 'Kode Klasifikasi Surat': $result .= $kd_klasifikasi; break;
-            case 'Kode Sub Klasifikasi Surat': $result .= $kd_sub_klasifikasi; break;
-            case 'Tanggal Angka': $result .= $day_num; break;
-            case 'Tanggal Romawi': $result .= $romawi_map[(int)$day_num] ?? $day_num; break;
-            case 'Bulan Angka': $result .= date('m', $time); break;
-            case 'Bulan Romawi': $result .= $bulan_romawi; break;
-            case 'Tahun': $result .= $year_num; break;
-            case 'Pemisah (-)': $result .= '-'; break;
-            case 'Pemisah (/)': $result .= '/'; break;
-            case 'Pemisah (.)': $result .= '.'; break;
+    // 1. Ambil nomor terakhir (no_tahunan) dari master surat_sub_klasifikasi jika tahun sesuai
+    $res_start = $koneksi->query("SELECT no_tahunan, tahun FROM surat_sub_klasifikasi WHERE kd_klasifikasi = '$kd_esc' OR kd = '$kd_esc' LIMIT 1");
+    $initial_start = 0;
+    if ($res_start && $row_st = $res_start->fetch_assoc()) {
+        if ((int)$row_st['tahun'] === (int)$year_num) {
+            $initial_start = (int)$row_st['no_tahunan'];
         }
     }
-    return $result;
+
+    // 2. Nomor urut berikutnya = Nomor Terakhir + 1
+    $next_num = $initial_start + 1;
+    $no_tahunan = str_pad($next_num, 3, '0', STR_PAD_LEFT);
+
+    $kode_org = 'RSBW';
+
+    if ($kd_klasifikasi === 'INT') {
+        // Surat Internal: 083/INT/RSBW/VII/2026
+        return "{$no_tahunan}/INT/{$kode_org}/{$bulan_romawi}/{$year_num}";
+    } elseif ($kd_klasifikasi === 'EKS') {
+        // Surat Eksternal: 083/RSBW/VII/2026
+        return "{$no_tahunan}/{$kode_org}/{$bulan_romawi}/{$year_num}";
+    } elseif ($kd_klasifikasi === 'DKL') {
+        // Surat Diklat: 083/INT/DIKLAT/RSBW/VII/2026
+        return "{$no_tahunan}/INT/DIKLAT/{$kode_org}/{$bulan_romawi}/{$year_num}";
+    } else {
+        return "{$no_tahunan}/{$kd_klasifikasi}/{$kode_org}/{$bulan_romawi}/{$year_num}";
+    }
 }
 
-// Pre-generate sample numbers per jenis_surat for client JS
+// ── 3B. AJAX HANDLER UNTUK GENERATE DYNAMIC NO SURAT BY TANGGAL ───────────────
+if (isset($_GET['ajax_action']) && $_GET['ajax_action'] === 'get_no_surat') {
+    $kd_klasifikasi = $_GET['kd_klasifikasi'] ?? ($_GET['id_no_surat'] ?? 'INT');
+    $tgl_surat      = $_GET['tgl_surat'] ?? date('Y-m-d');
+
+    echo buildGeneratedNoSuratByKlasifikasi($koneksi, $kd_klasifikasi, $tgl_surat);
+    exit;
+}
+
+// Pre-generate sample numbers per klasifikasi for client JS
 $generated_map = [];
-foreach ($set_nomor_list as $sn) {
-    $generated_map[$sn['id_no_surat']] = buildGeneratedNoSurat($koneksi, $sn, date('Y-m-d'));
+foreach ($klasifikasi_list as $klas) {
+    $generated_map[$klas['kd']] = buildGeneratedNoSuratByKlasifikasi($koneksi, $klas['kd'], date('Y-m-d'));
 }
 
 // ── 4. PROCESS POST ACTIONS ────────────────────────────────────────────────
@@ -95,12 +89,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── A. SIMPAN SURAT KELUAR BARU + ALOKASI 3 LEVEL DISPOSISI / PERSETUJUAN ─
     if ($action === 'simpan_surat') {
-        $no_surat   = trim($_POST['no_surat'] ?? '');
-        $tujuan     = trim($_POST['tujuan'] ?? '');
-        $tgl_surat  = $_POST['tgl_surat'] ?? date('Y-m-d');
-        $tgl_kirim  = $_POST['tgl_kirim'] ?? date('Y-m-d');
-        $perihal    = trim($_POST['perihal'] ?? '');
-        $keterangan = trim($_POST['keterangan'] ?? '');
+        $no_surat       = trim($_POST['no_surat'] ?? '');
+        $kd_klasifikasi = trim($_POST['kd_klasifikasi'] ?? 'INT');
+        $tujuan         = trim($_POST['tujuan'] ?? '');
+        $tgl_surat      = $_POST['tgl_surat'] ?? date('Y-m-d');
+        $tgl_kirim      = $_POST['tgl_kirim'] ?? date('Y-m-d');
+        $perihal        = trim($_POST['perihal'] ?? '');
+        $keterangan     = trim($_POST['keterangan'] ?? '');
         
         $level1_nik = $_POST['level1_nik'] ?? '';
         $level2_nik = $_POST['level2_nik'] ?? '';
@@ -147,9 +142,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (empty($error_msg)) {
-                // Simpan ke surat_keluar (Tabel standar Khanza 100% murni tanpa diubah)
                 $kd_lemari = 'SA001'; $kd_rak = 'SR001'; $kd_map = 'SM001'; $kd_ruang = 'SG001';
-                $kd_sifat = 'SF001'; $kd_balas = 'SB002'; $kd_status = 'SS003'; $kd_klasifikasi = 'SK002';
+                $kd_sifat = 'SF001'; $kd_balas = 'SB002'; $kd_status = 'SS003';
                 $lampiran = '-'; $tembusan = '-'; $tgl_deadline = $tgl_kirim;
 
                 $stmt_ins = $koneksi->prepare("INSERT INTO surat_keluar 
@@ -177,6 +171,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $stmt_lvl->execute();
                         }
                         $stmt_lvl->close();
+
+                        // Update counter no_tahunan & bulan/tahun di tabel master surat_sub_klasifikasi
+                        $kd_k_esc = $koneksi->real_escape_string($kd_klasifikasi);
+                        $time_s   = strtotime($tgl_surat);
+                        $m_num    = (int)date('m', $time_s);
+                        $y_num    = (int)date('Y', $time_s);
+
+                        preg_match('/^(\d+)/', $no_surat, $matches);
+                        $current_no_num = isset($matches[1]) ? (int)$matches[1] : 0;
+
+                        if ($current_no_num > 0) {
+                            $koneksi->query("UPDATE surat_sub_klasifikasi SET no_tahunan = $current_no_num, bulan = $m_num, tahun = $y_num WHERE kd_klasifikasi = '$kd_k_esc' OR kd = '$kd_k_esc'");
+                        }
 
                         $success_msg = "Surat Keluar <strong>" . htmlspecialchars($no_surat) . "</strong> (" . $no_urut . ") berhasil disimpan dan alur persetujuan 3 level telah dialokasikan.";
                     } else {
@@ -468,22 +475,22 @@ if ($res_surat) {
 
             <div class="modal-body" style="display: flex; flex-direction: column; gap: 14px;">
                 
-                <!-- DROPDOWN PATTERN SURAT_KELUAR_SET_NOMOR -->
+                <!-- DROPDOWN PATTERN SURAT_KLASIFIKASI -->
                 <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px;">
                     <label class="form-label" style="color: #0284c7; font-weight: 700; display: flex; align-items: center; gap: 6px;">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                        Pilih Format Penomoran Otomatis (surat_keluar_set_nomor)
+                        Pilih Klasifikasi Surat (surat_klasifikasi)
                     </label>
-                    <select id="select_jenis_surat" class="form-control" onchange="autoGenerateNoSurat(this.value)" style="background: #fff;">
-                        <option value="">-- Manual / Tanpa Format Otomatis --</option>
-                        <?php foreach ($set_nomor_list as $sn): ?>
-                            <option value="<?= $sn['id_no_surat'] ?>">
-                                📜 <?= htmlspecialchars($sn['jenis_surat']) ?>
+                    <select id="select_jenis_surat" name="kd_klasifikasi" class="form-control" onchange="autoGenerateNoSurat()" style="background: #fff;">
+                        <option value="">-- Pilih Klasifikasi Surat --</option>
+                        <?php foreach ($klasifikasi_list as $klas): ?>
+                            <option value="<?= $klas['kd'] ?>">
+                                📜 <?= htmlspecialchars($klas['klasifikasi']) ?> (<?= htmlspecialchars($klas['kd']) ?>)
                             </option>
                         <?php endforeach; ?>
                     </select>
                     <div style="font-size: 11px; color: #64748b; margin-top: 4px;">
-                        💡 Memilih jenis surat di atas akan otomatis merangkai Nomor Surat resmi berdasarkan master aturan SIMRS.
+                        💡 Memilih klasifikasi surat di atas akan otomatis merangkai Nomor Surat resmi berdasarkan master SIMRS.
                     </div>
                 </div>
 
@@ -501,7 +508,7 @@ if ($res_surat) {
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                     <div>
                         <label class="form-label">Tanggal Surat</label>
-                        <input type="date" name="tgl_surat" class="form-control" value="<?= date('Y-m-d') ?>" required>
+                        <input type="date" id="input_tgl_surat" name="tgl_surat" class="form-control" value="<?= date('Y-m-d') ?>" onchange="autoGenerateNoSurat()" required>
                     </div>
                     <div>
                         <label class="form-label">Rencana Tanggal Kirim</label>
@@ -663,11 +670,26 @@ const LOGGED_NIK     = <?= json_encode($nik_user) ?>;
 const IS_ADMIN       = <?= json_encode($is_admin) ?>;
 const GENERATED_MAP  = <?= json_encode($generated_map) ?>;
 
-function autoGenerateNoSurat(idNoSurat) {
-    const inputNo = document.getElementById('input_no_surat');
-    if (idNoSurat && GENERATED_MAP[idNoSurat]) {
-        inputNo.value = GENERATED_MAP[idNoSurat];
-    }
+function autoGenerateNoSurat() {
+    const selectElem = document.getElementById('select_jenis_surat');
+    const inputTgl   = document.getElementById('input_tgl_surat');
+    const inputNo    = document.getElementById('input_no_surat');
+
+    if (!selectElem || !inputNo) return;
+
+    const kdKlasifikasi = selectElem.value;
+    const tglSurat      = inputTgl ? inputTgl.value : '';
+
+    if (!kdKlasifikasi) return;
+
+    fetch(`index.php?page=surat_keluar&ajax_action=get_no_surat&kd_klasifikasi=${encodeURIComponent(kdKlasifikasi)}&tgl_surat=${encodeURIComponent(tglSurat)}`)
+        .then(response => response.text())
+        .then(noSurat => {
+            if (noSurat && noSurat.trim() !== '') {
+                inputNo.value = noSurat.trim();
+            }
+        })
+        .catch(err => console.error('Error auto generating no surat:', err));
 }
 
 function openDetailDisposisiSKModal(s) {
