@@ -101,6 +101,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $level2_nik = $_POST['level2_nik'] ?? '';
         $level3_nik = $_POST['level3_nik'] ?? '';
 
+        $qr_x = isset($_POST['qr_x']) && $_POST['qr_x'] !== '' ? (float)$_POST['qr_x'] : null;
+        $qr_y = isset($_POST['qr_y']) && $_POST['qr_y'] !== '' ? (float)$_POST['qr_y'] : null;
+
         if (empty($no_surat) || empty($tujuan) || empty($perihal)) {
             $error_msg = "Nomor Surat, Tujuan, dan Perihal wajib diisi!";
         } elseif (empty($level1_nik) || empty($level2_nik) || empty($level3_nik)) {
@@ -118,13 +121,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $no_urut = $prefix . str_pad($next_num, 3, '0', STR_PAD_LEFT);
 
-            // Handle Upload File PDF / Gambar
+            // Handle Upload File PDF
             $file_url = '';
             if (isset($_FILES['file_surat']) && $_FILES['file_surat']['error'] === UPLOAD_ERR_OK) {
                 $file_tmp  = $_FILES['file_surat']['tmp_name'];
                 $file_name = $_FILES['file_surat']['name'];
                 $ext       = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
-                $allowed   = ['pdf', 'jpg', 'jpeg', 'png'];
+                $allowed   = ['pdf'];
 
                 if (in_array($ext, $allowed)) {
                     $new_filename = 'SuratKeluar_' . $no_urut . '_' . time() . '.' . $ext;
@@ -137,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $file_url = 'pages/upload/' . $new_filename;
                     }
                 } else {
-                    $error_msg = "Format file tidak didukung! Format yang diperbolehkan: PDF, JPG, PNG.";
+                    $error_msg = "Format file tidak didukung! File surat keluar WAJIB berformat PDF untuk penandatanganan QR Code.";
                 }
             }
 
@@ -147,14 +150,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $lampiran = '-'; $tembusan = '-'; $tgl_deadline = $tgl_kirim;
 
                 $stmt_ins = $koneksi->prepare("INSERT INTO surat_keluar 
-                    (no_urut, no_surat, tujuan, tgl_surat, perihal, tgl_kirim, kd_lemari, kd_rak, kd_map, kd_ruang, kd_sifat, lampiran, tembusan, tgl_deadline_balas, kd_balas, keterangan, kd_status, kd_klasifikasi, file_url)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    (no_urut, no_surat, tujuan, tgl_surat, perihal, tgl_kirim, kd_lemari, kd_rak, kd_map, kd_ruang, kd_sifat, lampiran, tembusan, tgl_deadline_balas, kd_balas, keterangan, kd_status, kd_klasifikasi, file_url, qr_x, qr_y)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 
                 if ($stmt_ins) {
-                    $stmt_ins->bind_param("sssssssssssssssssss", 
+                    $stmt_ins->bind_param("sssssssssssssssssssdd", 
                         $no_urut, $no_surat, $tujuan, $tgl_surat, $perihal, $tgl_kirim,
                         $kd_lemari, $kd_rak, $kd_map, $kd_ruang, $kd_sifat, $lampiran, $tembusan,
-                        $tgl_deadline, $kd_balas, $keterangan, $kd_status, $kd_klasifikasi, $file_url
+                        $tgl_deadline, $kd_balas, $keterangan, $kd_status, $kd_klasifikasi, $file_url,
+                        $qr_x, $qr_y
                     );
 
                     if ($stmt_ins->execute()) {
@@ -231,6 +235,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt_up_disp->bind_param("ssssssi", $now, $isi_disposisi, $harap, $catatan, $pengesahan, $no_urut, $level);
                     if ($stmt_up_disp->execute()) {
                         $success_msg = "Persetujuan Disposisi Level $level untuk surat keluar $no_urut berhasil disimpan.";
+
+                        // ===== QR CODE STAMPING UTK LEVEL 3 =====
+                        if ($level === 3 && $pengesahan === 'true') {
+                            require_once __DIR__ . '/../../vendor/autoload.php';
+                            
+                            // Ambil info surat keluar
+                            $res_sk = $koneksi->query("SELECT file_url, qr_x, qr_y FROM surat_keluar WHERE no_urut = '$no_urut'");
+                            if ($res_sk && $row_sk = $res_sk->fetch_assoc()) {
+                                $pdf_path = __DIR__ . '/../' . str_replace('pages/upload/', 'upload/', $row_sk['file_url']);
+                                // the standard is file_url saves 'pages/upload/...', so inside pages it's __DIR__ . '/../pages/upload/...' or just __DIR__ . '/../' . $row_sk['file_url']
+                                $pdf_path = __DIR__ . '/../' . $row_sk['file_url'];
+                                
+                                if (!empty($row_sk['file_url']) && file_exists($pdf_path) && strtolower(pathinfo($pdf_path, PATHINFO_EXTENSION)) === 'pdf') {
+                                    
+                                    try {
+                                        // 1. Generate QR Code
+                                        $options = new \chillerlan\QRCode\QROptions([
+                                            'version'      => 5,
+                                            'outputType'   => \chillerlan\QRCode\QRCode::OUTPUT_IMAGE_PNG,
+                                            'eccLevel'     => \chillerlan\QRCode\QRCode::ECC_L,
+                                            'scale'        => 5,
+                                            'imageBase64'  => false,
+                                        ]);
+                                        
+                                        $verify_url = "http://" . $_SERVER['HTTP_HOST'] . "/alatbantu/pages/verify_surat.php?no_urut=" . urlencode($no_urut);
+                                        $qrcode = new \chillerlan\QRCode\QRCode($options);
+                                        $qr_img_path = sys_get_temp_dir() . '/qr_' . $no_urut . '.png';
+                                        $qrcode->render($verify_url, $qr_img_path);
+                                        
+                                        // 2. Manipulasi PDF
+                                        $pdf = new \setasign\Fpdi\Fpdi();
+                                        $pageCount = $pdf->setSourceFile($pdf_path);
+                                        
+                                        for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
+                                            $templateId = $pdf->importPage($pageNo);
+                                            $size = $pdf->getTemplateSize($templateId);
+                                            
+                                            // FPDI defaults to portrait if height > width
+                                            $orientation = $size['width'] > $size['height'] ? 'L' : 'P';
+                                            $pdf->AddPage($orientation, [$size['width'], $size['height']]);
+                                            $pdf->useTemplate($templateId);
+                                            
+                                            // 3. Jika halaman terakhir, tempel QR Code
+                                            if ($pageNo === $pageCount) {
+                                                // Konversi persen ke ukuran milimeter
+                                                $qr_x_pct = $row_sk['qr_x'] !== null ? (float)$row_sk['qr_x'] : 70;
+                                                $qr_y_pct = $row_sk['qr_y'] !== null ? (float)$row_sk['qr_y'] : 80;
+                                                
+                                                $x_mm = ($qr_x_pct / 100) * $size['width'];
+                                                $y_mm = ($qr_y_pct / 100) * $size['height'];
+                                                
+                                                // Ukuran QR code approx 25x25 mm
+                                                $qr_size = 25;
+                                                $pdf->Image($qr_img_path, $x_mm, $y_mm, $qr_size, $qr_size, 'PNG');
+                                                
+                                                // Tambah teks kecil di bawah QR Code
+                                                $pdf->SetFont('Arial', '', 8);
+                                                $pdf->SetXY($x_mm, $y_mm + $qr_size);
+                                                $pdf->Cell($qr_size, 4, 'Signed Digitally', 0, 0, 'C');
+                                            }
+                                        }
+                                        
+                                        // Simpan PDF baru
+                                        $new_filename = 'SuratKeluar_' . $no_urut . '_' . time() . '_signed.pdf';
+                                        $target_path = __DIR__ . '/upload/' . $new_filename;
+                                        $pdf->Output('F', $target_path);
+                                        
+                                        // Update db dg file baru
+                                        $new_file_url = 'pages/upload/' . $new_filename;
+                                        $koneksi->query("UPDATE surat_keluar SET file_url = '$new_file_url' WHERE no_urut = '$no_urut'");
+                                        
+                                        // Cleanup
+                                        if (file_exists($qr_img_path)) unlink($qr_img_path);
+                                        
+                                        $success_msg .= " Dokumen telah berhasil ditandatangani secara digital dengan QR Code.";
+                                        
+                                    } catch (Exception $e) {
+                                        $error_msg = "Gagal memproses QR Code pada PDF: " . $e->getMessage();
+                                    }
+                                }
+                            }
+                        }
+                        // ==========================================
                     } else {
                         $error_msg = "Gagal memperbarui disposisi: " . $koneksi->error;
                     }
@@ -252,6 +339,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tgl_kirim      = $_POST['tgl_kirim'] ?? date('Y-m-d');
         $perihal        = trim($_POST['perihal'] ?? '');
         $keterangan     = trim($_POST['keterangan'] ?? '');
+        
+        $qr_x = isset($_POST['qr_x']) && $_POST['qr_x'] !== '' ? (float)$_POST['qr_x'] : null;
+        $qr_y = isset($_POST['qr_y']) && $_POST['qr_y'] !== '' ? (float)$_POST['qr_y'] : null;
 
         // Cek Hak Akses: Admin atau User yang input
         $can_edit = $is_admin;
@@ -274,12 +364,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $update_file_query = "";
             $file_url = "";
 
-            // Handle Upload File PDF / Gambar (Menyusul/Update)
+            // Handle Upload File PDF (Menyusul/Update)
             if (isset($_FILES['file_surat']) && $_FILES['file_surat']['error'] === UPLOAD_ERR_OK) {
                 $file_tmp  = $_FILES['file_surat']['tmp_name'];
                 $file_name = $_FILES['file_surat']['name'];
                 $ext       = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
-                $allowed   = ['pdf', 'jpg', 'jpeg', 'png'];
+                $allowed   = ['pdf'];
 
                 if (in_array($ext, $allowed)) {
                     $new_filename = 'SuratKeluar_' . $no_urut . '_' . time() . '.' . $ext;
@@ -293,19 +383,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $update_file_query = ", file_url = ?";
                     }
                 } else {
-                    $error_msg = "Format file tidak didukung! Format yang diperbolehkan: PDF, JPG, PNG.";
+                    $error_msg = "Format file tidak didukung! File surat keluar WAJIB berformat PDF.";
                 }
             }
 
             if (empty($error_msg)) {
-                $sql_up = "UPDATE surat_keluar SET no_surat=?, tujuan=?, tgl_surat=?, perihal=?, tgl_kirim=?, keterangan=?, kd_klasifikasi=? $update_file_query WHERE no_urut=?";
+                $qr_update_query = "";
+                if ($qr_x !== null && $qr_y !== null) {
+                    $qr_update_query = ", qr_x = ?, qr_y = ?";
+                }
+
+                $sql_up = "UPDATE surat_keluar SET no_surat=?, tujuan=?, tgl_surat=?, perihal=?, tgl_kirim=?, keterangan=?, kd_klasifikasi=? $update_file_query $qr_update_query WHERE no_urut=?";
                 $stmt_up = $koneksi->prepare($sql_up);
                 if ($stmt_up) {
+                    // This gets tricky with dynamic binds, so we will construct the params array
+                    $types = "sssssss";
+                    $params = [&$no_surat, &$tujuan, &$tgl_surat, &$perihal, &$tgl_kirim, &$keterangan, &$kd_klasifikasi];
+                    
                     if (!empty($file_url)) {
-                        $stmt_up->bind_param("sssssssss", $no_surat, $tujuan, $tgl_surat, $perihal, $tgl_kirim, $keterangan, $kd_klasifikasi, $file_url, $no_urut);
-                    } else {
-                        $stmt_up->bind_param("ssssssss", $no_surat, $tujuan, $tgl_surat, $perihal, $tgl_kirim, $keterangan, $kd_klasifikasi, $no_urut);
+                        $types .= "s";
+                        $params[] = &$file_url;
                     }
+                    if ($qr_x !== null && $qr_y !== null) {
+                        $types .= "dd";
+                        $params[] = &$qr_x;
+                        $params[] = &$qr_y;
+                    }
+                    $types .= "s";
+                    $params[] = &$no_urut;
+
+                    $bind_names[] = $types;
+                    for ($i=0; $i<count($params); $i++) {
+                        $bind_name = 'bind' . $i;
+                        $$bind_name = $params[$i];
+                        $bind_names[] = &$$bind_name;
+                    }
+
+                    call_user_func_array(array($stmt_up, 'bind_param'), $bind_names);
                     
                     if ($stmt_up->execute()) {
                         $success_msg = "Data Surat Keluar $no_urut berhasil diperbarui.";
@@ -623,8 +737,20 @@ if ($res_surat) {
                 </div>
 
                 <div>
-                    <label class="form-label">Upload Draf Berkas Surat (PDF / Foto)</label>
-                    <input type="file" name="file_surat" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+                    <label class="form-label">Upload Draf Berkas Surat (Wajib PDF)</label>
+                    <input type="file" name="file_surat" id="file_surat_add" class="form-control" accept=".pdf" onchange="renderPdfPreview(this, 'add')">
+                    
+                    <!-- Hidden inputs for QR coords -->
+                    <input type="hidden" name="qr_x" id="qr_x_add" value="70">
+                    <input type="hidden" name="qr_y" id="qr_y_add" value="80">
+                    
+                    <div id="preview_container_add" style="display:none; margin-top:10px; position:relative; width:100%; border:1px solid #ccc; overflow:hidden;">
+                        <canvas id="pdf_canvas_add" style="width:100%; display:block;"></canvas>
+                        <div id="qr_box_add" style="position:absolute; width:50px; height:50px; background:rgba(2, 132, 199, 0.5); border:2px dashed #0369a1; cursor:move; display:flex; align-items:center; justify-content:center; font-size:10px; color:#fff; text-align:center;">
+                            Posisi QR
+                        </div>
+                    </div>
+                    <small style="color:#64748b; display:none; margin-top:4px;" id="preview_help_add">Geser kotak biru di atas untuk menentukan posisi Tanda Tangan QR Code.</small>
                 </div>
 
                 <!-- ALOKASI 3 LEVEL DISPOSISI / PERSETUJUAN -->
@@ -822,9 +948,21 @@ if ($res_surat) {
                 </div>
 
                 <div>
-                    <label class="form-label">Upload Draf Berkas Surat Menyusul/Update (PDF / Foto)</label>
-                    <input type="file" name="file_surat" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+                    <label class="form-label">Upload Draf Berkas Surat Menyusul/Update (Wajib PDF)</label>
+                    <input type="file" name="file_surat" id="file_surat_edit" class="form-control" accept=".pdf" onchange="renderPdfPreview(this, 'edit')">
                     <small style="color: #64748b;">Biarkan kosong jika tidak ingin mengubah file.</small>
+                    
+                    <!-- Hidden inputs for QR coords -->
+                    <input type="hidden" name="qr_x" id="qr_x_edit" value="70">
+                    <input type="hidden" name="qr_y" id="qr_y_edit" value="80">
+                    
+                    <div id="preview_container_edit" style="display:none; margin-top:10px; position:relative; width:100%; border:1px solid #ccc; overflow:hidden;">
+                        <canvas id="pdf_canvas_edit" style="width:100%; display:block;"></canvas>
+                        <div id="qr_box_edit" style="position:absolute; width:50px; height:50px; background:rgba(2, 132, 199, 0.5); border:2px dashed #0369a1; cursor:move; display:flex; align-items:center; justify-content:center; font-size:10px; color:#fff; text-align:center;">
+                            Posisi QR
+                        </div>
+                    </div>
+                    <small style="color:#64748b; display:none; margin-top:4px;" id="preview_help_edit">Geser kotak biru di atas untuk menentukan posisi Tanda Tangan QR Code.</small>
                 </div>
 
             </div>
@@ -967,4 +1105,103 @@ function openEditSKModal(s) {
     
     openModal('editSuratKeluarModal');
 }
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+    function renderPdfPreview(inputElement, prefix) {
+        const file = inputElement.files[0];
+        const container = document.getElementById('preview_container_' + prefix);
+        
+        if (file && file.type === 'application/pdf') {
+            container.style.display = 'block';
+            document.getElementById('preview_help_' + prefix).style.display = 'block';
+            
+            const fileReader = new FileReader();
+            fileReader.onload = function() {
+                const typedarray = new Uint8Array(this.result);
+                
+                pdfjsLib.getDocument(typedarray).promise.then(pdf => {
+                    // Render last page
+                    pdf.getPage(pdf.numPages).then(page => {
+                        const scale = 1.0;
+                        const viewport = page.getViewport({scale: scale});
+                        
+                        const canvas = document.getElementById('pdf_canvas_' + prefix);
+                        const context = canvas.getContext('2d');
+                        
+                        // We scale the canvas width to 100% of the container, but we need the aspect ratio
+                        const containerWidth = container.clientWidth;
+                        const scaleFactor = containerWidth / viewport.width;
+                        const scaledViewport = page.getViewport({scale: scaleFactor});
+                        
+                        canvas.height = scaledViewport.height;
+                        canvas.width = scaledViewport.width;
+                        
+                        const renderContext = {
+                            canvasContext: context,
+                            viewport: scaledViewport
+                        };
+                        page.render(renderContext).promise.then(() => {
+                            setupDraggableQR(prefix);
+                        });
+                    });
+                });
+            };
+            fileReader.readAsArrayBuffer(file);
+        } else {
+            container.style.display = 'none';
+            document.getElementById('preview_help_' + prefix).style.display = 'none';
+        }
+    }
+    
+    function setupDraggableQR(prefix) {
+        const box = document.getElementById('qr_box_' + prefix);
+        const container = document.getElementById('preview_container_' + prefix);
+        const inputX = document.getElementById('qr_x_' + prefix);
+        const inputY = document.getElementById('qr_y_' + prefix);
+        
+        let isDragging = false;
+        
+        // Initial position (X: 70%, Y: 80%)
+        const initX = (container.clientWidth * 0.70);
+        const initY = (container.clientHeight * 0.80);
+        box.style.left = initX + 'px';
+        box.style.top = initY + 'px';
+        
+        box.addEventListener('mousedown', function(e) {
+            isDragging = true;
+            e.preventDefault();
+        });
+        
+        document.addEventListener('mouseup', function(e) {
+            if (isDragging) {
+                isDragging = false;
+                // Calculate percentage
+                const xPct = (parseFloat(box.style.left) / container.clientWidth) * 100;
+                const yPct = (parseFloat(box.style.top) / container.clientHeight) * 100;
+                inputX.value = xPct.toFixed(2);
+                inputY.value = yPct.toFixed(2);
+            }
+        });
+        
+        document.addEventListener('mousemove', function(e) {
+            if (!isDragging) return;
+            
+            const rect = container.getBoundingClientRect();
+            let x = e.clientX - rect.left - (box.offsetWidth / 2);
+            let y = e.clientY - rect.top - (box.offsetHeight / 2);
+            
+            // Constrain
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            if (x > container.clientWidth - box.offsetWidth) x = container.clientWidth - box.offsetWidth;
+            if (y > container.clientHeight - box.offsetHeight) y = container.clientHeight - box.offsetHeight;
+            
+            box.style.left = x + 'px';
+            box.style.top = y + 'px';
+        });
+    }
 </script>
