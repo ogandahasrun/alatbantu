@@ -1,6 +1,28 @@
 <?php
 defined('host') or die('Akses langsung tidak diizinkan.');
 
+// AJAX Pegawai Autocomplete endpoint (Must be handled at top before any output)
+if (isset($_GET['ajax_search_pegawai'])) {
+    if (ob_get_length()) ob_clean();
+    header('Content-Type: application/json');
+    $val = trim($_GET['ajax_search_pegawai']);
+    $list_res = [];
+    if (strlen($val) >= 2) {
+        // Query pegawai who don't already have an entry in user
+        $stmt_s = $koneksi->prepare("SELECT nik, nama, jbtn FROM pegawai WHERE (nama LIKE ? OR nik LIKE ? OR jbtn LIKE ?) AND nik NOT IN (SELECT aes_decrypt(id_user, 'nur') FROM user WHERE id_user IS NOT NULL) ORDER BY nama ASC LIMIT 10");
+        $param_s = "%$val%";
+        $stmt_s->bind_param("sss", $param_s, $param_s, $param_s);
+        $stmt_s->execute();
+        $res_s = $stmt_s->get_result();
+        while ($r = $res_s->fetch_assoc()) {
+            $list_res[] = $r;
+        }
+        $stmt_s->close();
+    }
+    echo json_encode($list_res);
+    exit;
+}
+
 // Handle Actions (POST requests)
 $success_msg = '';
 $error_msg = '';
@@ -224,28 +246,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 }
 
 // Fetch lists for rendering
-$search = trim($_GET['search'] ?? '');
+$search      = trim($_GET['search'] ?? '');
+$limit_param = trim($_GET['limit'] ?? '10');
+
+$is_all = ($limit_param === 'all');
+$limit  = $is_all ? 999999 : (int)$limit_param;
+if ($limit <= 0) $limit = 10;
+
 $page_num = isset($_GET['p']) ? (int)$_GET['p'] : 1;
 if ($page_num < 1) $page_num = 1;
-$limit = 10;
 $offset = ($page_num - 1) * $limit;
 
 // Total Count
-$count_query = "SELECT COUNT(*) as total FROM user";
+$count_query = "SELECT COUNT(*) as total 
+               FROM user u 
+               LEFT JOIN pegawai p ON p.nik = aes_decrypt(u.id_user, 'nur')";
 if (!empty($search)) {
-    $count_query = "SELECT COUNT(*) as total FROM user WHERE aes_decrypt(id_user, 'nur') LIKE ? OR aes_decrypt(id_user, 'nur') IN (SELECT nik FROM pegawai WHERE nama LIKE ?)";
+    $count_query .= " WHERE aes_decrypt(u.id_user, 'nur') LIKE ? OR p.nama LIKE ? OR p.jbtn LIKE ?";
 }
 $stmt_count = $koneksi->prepare($count_query);
 if (!empty($search)) {
     $search_param = "%$search%";
-    $stmt_count->bind_param("ss", $search_param, $search_param);
+    $stmt_count->bind_param("sss", $search_param, $search_param, $search_param);
 }
 $stmt_count->execute();
 $total_rows = $stmt_count->get_result()->fetch_assoc()['total'];
 $stmt_count->close();
 
-$total_pages = ceil($total_rows / $limit);
+$total_pages = $is_all ? 1 : ceil($total_rows / $limit);
 if ($total_pages < 1) $total_pages = 1;
+if ($page_num > $total_pages) $page_num = $total_pages;
+$offset = ($page_num - 1) * $limit;
 
 // Fetch users with decryption, pegawai details & hak_akses
 $query = "SELECT 
@@ -266,13 +297,13 @@ $query = "SELECT
           LEFT JOIN hak_akses h ON h.nik = aes_decrypt(u.id_user, 'nur')";
           
 if (!empty($search)) {
-    $query .= " WHERE aes_decrypt(u.id_user, 'nur') LIKE ? OR p.nama LIKE ?";
+    $query .= " WHERE aes_decrypt(u.id_user, 'nur') LIKE ? OR p.nama LIKE ? OR p.jbtn LIKE ?";
 }
 $query .= " ORDER BY p.nama ASC LIMIT ? OFFSET ?";
 
 $stmt_list = $koneksi->prepare($query);
 if (!empty($search)) {
-    $stmt_list->bind_param("ssii", $search_param, $search_param, $limit, $offset);
+    $stmt_list->bind_param("sssii", $search_param, $search_param, $search_param, $limit, $offset);
 } else {
     $stmt_list->bind_param("ii", $limit, $offset);
 }
@@ -319,13 +350,34 @@ if ($res_tpl) {
 <?php endif; ?>
 
 <div class="content-card">
-    <div class="card-header">
-        <h3 class="card-title">Daftar Akun Pengguna</h3>
-        <form method="GET" style="display: flex; gap: 10px; width: 100%; max-width: 320px;">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+        <h3 class="card-title" style="margin: 0;">Daftar Akun Pengguna</h3>
+        
+        <form method="GET" action="index.php" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0;">
             <input type="hidden" name="page" value="manajemen">
             <input type="hidden" name="sub" value="user">
-            <input type="text" name="search" class="form-control" placeholder="Cari NIK atau Nama..." value="<?= htmlspecialchars($search) ?>">
-            <button type="submit" class="btn btn-secondary btn-sm" style="padding: 10px 14px;">Cari</button>
+            
+            <!-- Input Pencarian Pegawai / NIK / Jabatan -->
+            <div style="position: relative; display: flex; align-items: center;">
+                <input type="text" name="search" class="form-control" placeholder="🔍 Cari Nama, NIK, Jabatan..." value="<?= htmlspecialchars($search) ?>" style="padding-right: 28px; width: 220px; font-size: 13px;">
+                <?php if (!empty($search)): ?>
+                    <a href="index.php?page=manajemen&sub=user&limit=<?= urlencode($limit_param) ?>" style="position: absolute; right: 10px; color: #94a3b8; text-decoration: none; font-weight: bold;" title="Hapus pencarian">✕</a>
+                <?php endif; ?>
+            </div>
+
+            <!-- Dropdown Tampilkan Data Per Halaman / Semua Data -->
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #64748b;">
+                <label style="margin: 0; white-space: nowrap; font-weight: 600;">Tampilkan:</label>
+                <select name="limit" onchange="this.form.submit()" class="form-control" style="width: auto; padding: 6px 12px; font-size: 13px; cursor: pointer; background: #fff;">
+                    <option value="10" <?= $limit_param === '10' ? 'selected' : '' ?>>10 data / hal</option>
+                    <option value="25" <?= $limit_param === '25' ? 'selected' : '' ?>>25 data / hal</option>
+                    <option value="50" <?= $limit_param === '50' ? 'selected' : '' ?>>50 data / hal</option>
+                    <option value="100" <?= $limit_param === '100' ? 'selected' : '' ?>>100 data / hal</option>
+                    <option value="all" <?= $limit_param === 'all' ? 'selected' : '' ?>>🌐 Semua Data (<?= $total_rows ?>)</option>
+                </select>
+            </div>
+
+            <button type="submit" class="btn btn-secondary btn-sm" style="padding: 7px 14px; font-size: 13px;">Cari</button>
         </form>
     </div>
 
@@ -405,16 +457,42 @@ if ($res_tpl) {
         </table>
     </div>
 
-    <!-- Pagination -->
-    <?php if ($total_pages > 1): ?>
-        <div style="display: flex; justify-content: center; gap: 8px; margin-top: 24px;">
-            <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <a href="index.php?page=manajemen&sub=user&search=<?= urlencode($search) ?>&p=<?= $i ?>" class="btn <?= $i === $page_num ? 'btn-primary' : 'btn-secondary' ?> btn-sm" style="min-width: 32px; justify-content: center;">
-                    <?= $i ?>
-                </a>
-            <?php endfor; ?>
+    <!-- Summary Info & Dropdown Page Navigation -->
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #e2e8f0;">
+        <div style="font-size: 13px; color: #64748b;">
+            Menampilkan <strong><?= $total_rows > 0 ? $offset + 1 : 0 ?></strong> - <strong><?= min($offset + count($user_list), $total_rows) ?></strong> dari total <strong><?= $total_rows ?></strong> akun pengguna
         </div>
-    <?php endif; ?>
+
+        <?php if (!$is_all && $total_pages > 1): ?>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <!-- Button Prev -->
+                <?php if ($page_num > 1): ?>
+                    <a href="index.php?page=manajemen&sub=user&search=<?= urlencode($search) ?>&limit=<?= urlencode($limit_param) ?>&p=<?= $page_num - 1 ?>" class="btn btn-secondary btn-sm" style="padding: 6px 12px; font-size: 13px;">&laquo; Prev</a>
+                <?php else: ?>
+                    <button class="btn btn-secondary btn-sm" disabled style="opacity: 0.5; padding: 6px 12px; font-size: 13px;">&laquo; Prev</button>
+                <?php endif; ?>
+
+                <!-- Dropdown Pilih Halaman -->
+                <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                    <span style="color: #64748b; font-weight: 600;">Halaman:</span>
+                    <select onchange="window.location.href=this.value" class="form-control" style="width: auto; padding: 5px 10px; font-size: 13px; cursor: pointer; background: #fff;">
+                        <?php for ($p = 1; $p <= $total_pages; $p++): ?>
+                            <option value="index.php?page=manajemen&sub=user&search=<?= urlencode($search) ?>&limit=<?= urlencode($limit_param) ?>&p=<?= $p ?>" <?= $p === $page_num ? 'selected' : '' ?>>
+                                Halaman <?= $p ?> dari <?= $total_pages ?>
+                            </option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+
+                <!-- Button Next -->
+                <?php if ($page_num < $total_pages): ?>
+                    <a href="index.php?page=manajemen&sub=user&search=<?= urlencode($search) ?>&limit=<?= urlencode($limit_param) ?>&p=<?= $page_num + 1 ?>" class="btn btn-secondary btn-sm" style="padding: 6px 12px; font-size: 13px;">Next &raquo;</a>
+                <?php else: ?>
+                    <button class="btn btn-secondary btn-sm" disabled style="opacity: 0.5; padding: 6px 12px; font-size: 13px;">Next &raquo;</button>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+    </div>
 </div>
 
 <!-- ================= MODALS ================= -->
