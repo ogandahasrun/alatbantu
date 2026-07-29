@@ -241,6 +241,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+
+    // ── C. EDIT SURAT KELUAR ───────────────────────────────────────────────────
+    elseif ($action === 'edit_surat') {
+        $no_urut       = trim($_POST['no_urut'] ?? '');
+        $no_surat       = trim($_POST['no_surat'] ?? '');
+        $kd_klasifikasi = trim($_POST['kd_klasifikasi'] ?? 'INT');
+        $tujuan         = trim($_POST['tujuan'] ?? '');
+        $tgl_surat      = $_POST['tgl_surat'] ?? date('Y-m-d');
+        $tgl_kirim      = $_POST['tgl_kirim'] ?? date('Y-m-d');
+        $perihal        = trim($_POST['perihal'] ?? '');
+        $keterangan     = trim($_POST['keterangan'] ?? '');
+
+        // Cek Hak Akses: Admin atau User yang input
+        $can_edit = $is_admin;
+        if (!$can_edit) {
+            $stmt_chk = $koneksi->prepare("SELECT id FROM surat_keluar_disposisi_level WHERE no_urut = ? AND user_input = ? LIMIT 1");
+            $stmt_chk->bind_param("ss", $no_urut, $nik_user);
+            $stmt_chk->execute();
+            $res_chk = $stmt_chk->get_result();
+            if ($res_chk && $res_chk->num_rows > 0) {
+                $can_edit = true;
+            }
+            $stmt_chk->close();
+        }
+
+        if (empty($no_urut) || empty($no_surat) || empty($tujuan) || empty($perihal)) {
+            $error_msg = "Nomor Surat, Tujuan, dan Perihal wajib diisi!";
+        } elseif (!$can_edit) {
+            $error_msg = "Akses Ditolak: Hanya Admin atau pembuat surat yang dapat mengedit data ini!";
+        } else {
+            $update_file_query = "";
+            $file_url = "";
+
+            // Handle Upload File PDF / Gambar (Menyusul/Update)
+            if (isset($_FILES['file_surat']) && $_FILES['file_surat']['error'] === UPLOAD_ERR_OK) {
+                $file_tmp  = $_FILES['file_surat']['tmp_name'];
+                $file_name = $_FILES['file_surat']['name'];
+                $ext       = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+                $allowed   = ['pdf', 'jpg', 'jpeg', 'png'];
+
+                if (in_array($ext, $allowed)) {
+                    $new_filename = 'SuratKeluar_' . $no_urut . '_' . time() . '.' . $ext;
+                    $upload_dir   = __DIR__ . '/upload/';
+                    if (!is_dir($upload_dir)) {
+                        mkdir($upload_dir, 0777, true);
+                    }
+                    $target_path = $upload_dir . $new_filename;
+                    if (move_uploaded_file($file_tmp, $target_path)) {
+                        $file_url = 'pages/upload/' . $new_filename;
+                        $update_file_query = ", file_url = ?";
+                    }
+                } else {
+                    $error_msg = "Format file tidak didukung! Format yang diperbolehkan: PDF, JPG, PNG.";
+                }
+            }
+
+            if (empty($error_msg)) {
+                $sql_up = "UPDATE surat_keluar SET no_surat=?, tujuan=?, tgl_surat=?, perihal=?, tgl_kirim=?, keterangan=?, kd_klasifikasi=? $update_file_query WHERE no_urut=?";
+                $stmt_up = $koneksi->prepare($sql_up);
+                if ($stmt_up) {
+                    if (!empty($file_url)) {
+                        $stmt_up->bind_param("sssssssss", $no_surat, $tujuan, $tgl_surat, $perihal, $tgl_kirim, $keterangan, $kd_klasifikasi, $file_url, $no_urut);
+                    } else {
+                        $stmt_up->bind_param("ssssssss", $no_surat, $tujuan, $tgl_surat, $perihal, $tgl_kirim, $keterangan, $kd_klasifikasi, $no_urut);
+                    }
+                    
+                    if ($stmt_up->execute()) {
+                        $success_msg = "Data Surat Keluar $no_urut berhasil diperbarui.";
+                    } else {
+                        $error_msg = "Gagal memperbarui surat keluar: " . $koneksi->error;
+                    }
+                    $stmt_up->close();
+                } else {
+                    $error_msg = "Gagal menyiapkan query update surat keluar.";
+                }
+            }
+        }
+    }
 }
 
 // ── 5. QUERY FILTER DATA SURAT KELUAR KETAT PER USER ────────────────────────
@@ -385,6 +463,24 @@ if ($res_surat) {
                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
                                     Draf / Berkas
                                 </a>
+                            <?php endif; ?>
+
+                            <?php 
+                            $can_edit = $is_admin;
+                            if (!$can_edit) {
+                                foreach ($surat['levels'] as $l_num => $l_data) {
+                                    if (isset($l_data['user_input']) && $l_data['user_input'] === $nik_user) {
+                                        $can_edit = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            ?>
+                            <?php if ($can_edit): ?>
+                                <button type="button" class="btn btn-sm btn-warning" onclick='openEditSKModal(<?= json_encode($surat) ?>)' style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: #f59e0b; border-color: #f59e0b; color: white;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    Edit
+                                </button>
                             <?php endif; ?>
 
                             <button type="button" class="btn btn-sm btn-primary" onclick='openDetailDisposisiSKModal(<?= json_encode($surat) ?>)' style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: #0284c7; border-color: #0284c7;">
@@ -665,6 +761,82 @@ if ($res_surat) {
     </div>
 </div>
 
+<!-- ========================================================================= -->
+<!-- MODAL 3: EDIT SURAT KELUAR                                                -->
+<!-- ========================================================================= -->
+<div id="editSuratKeluarModal" class="modal-overlay" onclick="closeModal('editSuratKeluarModal')">
+    <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 720px;">
+        <form method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="action" value="edit_surat">
+            <input type="hidden" name="no_urut" id="edit_no_urut">
+            <div class="modal-header">
+                <h3>Edit Surat Keluar</h3>
+                <button type="button" class="btn-close" onclick="closeModal('editSuratKeluarModal')">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 14px;">
+                
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px;">
+                    <label class="form-label" style="color: #0284c7; font-weight: 700;">Klasifikasi Surat</label>
+                    <select id="edit_kd_klasifikasi" name="kd_klasifikasi" class="form-control" style="background: #fff;">
+                        <?php foreach ($klasifikasi_list as $klas): ?>
+                            <option value="<?= $klas['kd'] ?>">
+                                📜 <?= htmlspecialchars($klas['klasifikasi']) ?> (<?= htmlspecialchars($klas['kd']) ?>)
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div>
+                        <label class="form-label">Nomor Surat Keluar *</label>
+                        <input type="text" id="edit_no_surat" name="no_surat" class="form-control" required>
+                    </div>
+                    <div>
+                        <label class="form-label">Tujuan Pengiriman *</label>
+                        <input type="text" id="edit_tujuan" name="tujuan" class="form-control" required>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div>
+                        <label class="form-label">Tanggal Surat</label>
+                        <input type="date" id="edit_tgl_surat" name="tgl_surat" class="form-control" required>
+                    </div>
+                    <div>
+                        <label class="form-label">Rencana Tanggal Kirim</label>
+                        <input type="date" id="edit_tgl_kirim" name="tgl_kirim" class="form-control" required>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="form-label">Perihal / Subjek Surat Keluar *</label>
+                    <input type="text" id="edit_perihal" name="perihal" class="form-control" required>
+                </div>
+
+                <div>
+                    <label class="form-label">Keterangan / Catatan Pengajuan</label>
+                    <textarea id="edit_keterangan" name="keterangan" class="form-control" rows="2"></textarea>
+                </div>
+
+                <div>
+                    <label class="form-label">Upload Draf Berkas Surat Menyusul/Update (PDF / Foto)</label>
+                    <input type="file" name="file_surat" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+                    <small style="color: #64748b;">Biarkan kosong jika tidak ingin mengubah file.</small>
+                </div>
+
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('editSuratKeluarModal')">Batal</button>
+                <button type="submit" class="btn btn-primary" style="background: #f59e0b; border-color: #f59e0b; color: white;">Simpan Perubahan</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 const LOGGED_NIK     = <?= json_encode($nik_user) ?>;
 const IS_ADMIN       = <?= json_encode($is_admin) ?>;
@@ -781,5 +953,18 @@ function openDetailDisposisiSKModal(s) {
     }
 
     openModal('detailDisposisiSKModal');
+}
+
+function openEditSKModal(s) {
+    document.getElementById('edit_no_urut').value = s.no_urut;
+    document.getElementById('edit_kd_klasifikasi').value = s.kd_klasifikasi;
+    document.getElementById('edit_no_surat').value = s.no_surat;
+    document.getElementById('edit_tujuan').value = s.tujuan;
+    document.getElementById('edit_tgl_surat').value = s.tgl_surat;
+    document.getElementById('edit_tgl_kirim').value = s.tgl_kirim;
+    document.getElementById('edit_perihal').value = s.perihal;
+    document.getElementById('edit_keterangan').value = s.keterangan || '';
+    
+    openModal('editSuratKeluarModal');
 }
 </script>
