@@ -77,9 +77,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (empty($error_msg)) {
-                // Simpan ke surat_masuk (Tabel standar Khanza 100% murni tanpa diubah)
-                $kd_lemari = 'SA001'; $kd_rak = 'SR001'; $kd_map = 'SM001'; $kd_ruang = 'SG001';
-                $kd_sifat = 'SF001'; $kd_balas = 'SB002'; $kd_status = 'SS003'; $kd_klasifikasi = 'SK002';
+                // Ambil FK valid dari masing-masing tabel master Khanza
+                $get_valid_kd = function($table, $fallback) use ($koneksi) {
+                    $r = $koneksi->query("SELECT kd FROM $table LIMIT 1");
+                    return ($r && $row = $r->fetch_assoc()) ? $row['kd'] : $fallback;
+                };
+
+                $kd_lemari      = $get_valid_kd('surat_lemari', 'SA001');
+                $kd_rak         = $get_valid_kd('surat_rak', 'SR001');
+                $kd_map         = $get_valid_kd('surat_map', 'SM001');
+                $kd_ruang       = $get_valid_kd('surat_ruang', 'SG001');
+                $kd_sifat       = $get_valid_kd('surat_sifat', 'SF001');
+                $kd_balas       = $get_valid_kd('surat_balas', 'SB002');
+                $kd_status      = $get_valid_kd('surat_status', 'SS003');
+                $kd_klasifikasi = $get_valid_kd('surat_klasifikasi', 'EKS');
+
                 $lampiran = '-'; $tembusan = '-'; $tgl_deadline = $tgl_terima;
 
                 $stmt_ins = $koneksi->prepare("INSERT INTO surat_masuk 
@@ -217,6 +229,69 @@ if ($res_surat) {
     }
 }
 ?>
+<!-- jQuery & Select2 (CDN) for Searchable Level Dropdowns -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<style>
+/* Modern Select2 Styling for Level Dropdowns */
+.select2-container {
+    width: 100% !important;
+}
+.select2-container--default .select2-selection--single {
+    height: 42px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 10px !important;
+    padding: 6px 12px !important;
+    background-color: #ffffff !important;
+    display: flex !important;
+    align-items: center !important;
+    transition: all 0.2s ease-in-out !important;
+}
+.select2-container--default .select2-selection--single:focus,
+.select2-container--default.select2-container--open .select2-selection--single {
+    border-color: #10b981 !important;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15) !important;
+    outline: none !important;
+}
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    color: #0f172a !important;
+    font-size: 14px !important;
+    padding-left: 0 !important;
+    line-height: normal !important;
+}
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 40px !important;
+    right: 8px !important;
+}
+.select2-dropdown {
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15) !important;
+    z-index: 999999 !important;
+    overflow: hidden !important;
+}
+.select2-search--dropdown {
+    padding: 8px 10px !important;
+    background: #f8fafc !important;
+}
+.select2-search__field {
+    border-radius: 8px !important;
+    border: 1px solid #cbd5e1 !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    outline: none !important;
+}
+.select2-results__option {
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+}
+.select2-container--default .select2-results__option--highlighted[aria-selected] {
+    background-color: #10b981 !important;
+    color: #ffffff !important;
+}
+</style>
 
 <div class="content-card">
     <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;">
@@ -230,7 +305,7 @@ if ($res_surat) {
             </p>
         </div>
         
-        <button type="button" class="btn btn-primary" onclick="openModal('addSuratModal')" style="display: flex; align-items: center; gap: 8px;">
+        <button type="button" class="btn btn-primary" onclick="openModal('addSuratModal'); setTimeout(initSelect2Level, 50);" style="display: flex; align-items: center; gap: 8px;">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             Input Surat Masuk Baru
         </button>
@@ -448,8 +523,8 @@ if ($res_surat) {
                     <div style="display: flex; flex-direction: column; gap: 12px;">
                         <div>
                             <label class="form-label" style="color: #15803d; font-weight: 700;">Level 1 (misal: Kepala Bagian) *</label>
-                            <select name="level1_nik" class="form-control" required style="background: #fff;">
-                                <option value="">-- Pilih Pegawai Level 1 --</option>
+                            <select id="sm_select_level1_nik" name="level1_nik" class="form-control select2-pegawai-level" required style="background: #fff; width: 100%;">
+                                <option value="">-- Cari Nama / NIK Pegawai Level 1 --</option>
                                 <?php foreach ($pegawai_list as $p): ?>
                                     <option value="<?= $p['nik'] ?>"><?= htmlspecialchars($p['nama']) ?> (<?= htmlspecialchars($p['jbtn'] ?: 'Pegawai') ?> - NIK: <?= $p['nik'] ?>)</option>
                                 <?php endforeach; ?>
@@ -458,8 +533,8 @@ if ($res_surat) {
 
                         <div>
                             <label class="form-label" style="color: #15803d; font-weight: 700;">Level 2 (misal: Wakil Direktur) *</label>
-                            <select name="level2_nik" class="form-control" required style="background: #fff;">
-                                <option value="">-- Pilih Pegawai Level 2 --</option>
+                            <select id="sm_select_level2_nik" name="level2_nik" class="form-control select2-pegawai-level" required style="background: #fff; width: 100%;">
+                                <option value="">-- Cari Nama / NIK Pegawai Level 2 --</option>
                                 <?php foreach ($pegawai_list as $p): ?>
                                     <option value="<?= $p['nik'] ?>"><?= htmlspecialchars($p['nama']) ?> (<?= htmlspecialchars($p['jbtn'] ?: 'Pegawai') ?> - NIK: <?= $p['nik'] ?>)</option>
                                 <?php endforeach; ?>
@@ -468,8 +543,8 @@ if ($res_surat) {
 
                         <div>
                             <label class="form-label" style="color: #15803d; font-weight: 700;">Level 3 (misal: Direktur) *</label>
-                            <select name="level3_nik" class="form-control" required style="background: #fff;">
-                                <option value="">-- Pilih Pegawai Level 3 --</option>
+                            <select id="sm_select_level3_nik" name="level3_nik" class="form-control select2-pegawai-level" required style="background: #fff; width: 100%;">
+                                <option value="">-- Cari Nama / NIK Pegawai Level 3 --</option>
                                 <?php foreach ($pegawai_list as $p): ?>
                                     <option value="<?= $p['nik'] ?>"><?= htmlspecialchars($p['nama']) ?> (<?= htmlspecialchars($p['jbtn'] ?: 'Pegawai') ?> - NIK: <?= $p['nik'] ?>)</option>
                                 <?php endforeach; ?>
@@ -575,6 +650,21 @@ if ($res_surat) {
 <script>
 const LOGGED_NIK = <?= json_encode($nik_user) ?>;
 const IS_ADMIN   = <?= json_encode($is_admin) ?>;
+
+$(document).ready(function() {
+    initSelect2Level();
+});
+
+function initSelect2Level() {
+    if (typeof $.fn !== 'undefined' && typeof $.fn.select2 !== 'undefined') {
+        $('.select2-pegawai-level').select2({
+            dropdownParent: $('#addSuratModal .modal-content'),
+            width: '100%',
+            placeholder: '-- Cari Nama / NIK Pegawai --',
+            allowClear: true
+        });
+    }
+}
 
 function openDetailDisposisiModal(s) {
     document.getElementById('det_no_surat_title').innerText = "Detail Surat: " + s.no_surat;

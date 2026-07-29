@@ -238,7 +238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         // ===== QR CODE STAMPING UTK LEVEL 3 =====
                         if ($level === 3 && $pengesahan === 'true') {
-                            require_once __DIR__ . '/../../vendor/autoload.php';
+                            require_once __DIR__ . '/../vendor/autoload.php';
                             
                             // Ambil info surat keluar
                             $res_sk = $koneksi->query("SELECT file_url, qr_x, qr_y FROM surat_keluar WHERE no_urut = '$no_urut'");
@@ -250,19 +250,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 if (!empty($row_sk['file_url']) && file_exists($pdf_path) && strtolower(pathinfo($pdf_path, PATHINFO_EXTENSION)) === 'pdf') {
                                     
                                     try {
-                                        // 1. Generate QR Code
+                                        // Construct QR Code payload text
+                                        $nama_petugas = 'Penandatangan / Direktur';
+                                        $res_l3_peg = $koneksi->query("SELECT p.nama FROM surat_keluar_disposisi_level d LEFT JOIN pegawai p ON p.nik = d.nik WHERE d.no_urut = '$no_urut' AND d.level = 3 LIMIT 1");
+                                        if ($res_l3_peg && $r_l3_peg = $res_l3_peg->fetch_assoc()) {
+                                            if (!empty($r_l3_peg['nama'])) {
+                                                $nama_petugas = $r_l3_peg['nama'];
+                                            }
+                                        }
+
+                                        $nama_instansi = 'RSUD PRINGSEWU';
+                                        $alamat_instansi = 'Jl. Kesehatan No. 1 Pringsewu';
+                                        $res_set = $koneksi->query("SELECT nama_instansi, alamat_instansi, kabupaten FROM setting LIMIT 1");
+                                        if ($res_set && $r_set = $res_set->fetch_assoc()) {
+                                            if (!empty($r_set['nama_instansi'])) {
+                                                $nama_instansi = $r_set['nama_instansi'];
+                                            }
+                                            if (!empty($r_set['alamat_instansi'])) {
+                                                $alamat_instansi = $r_set['alamat_instansi'];
+                                                if (!empty($r_set['kabupaten'])) {
+                                                    $alamat_instansi .= ', ' . $r_set['kabupaten'];
+                                                }
+                                            }
+                                        }
+
+                                        $tgl_surat_val = !empty($row_sk['tgl_surat']) ? $row_sk['tgl_surat'] : date('Y-m-d');
+                                        $tgl_surat_fmt = date('d F Y', strtotime($tgl_surat_val));
+                                        $qr_content_text = "Ditandatangani secara digital oleh '$nama_petugas' pada tanggal '$tgl_surat_fmt' di '$nama_instansi' alamat '$alamat_instansi'";
                                         $options = new \chillerlan\QRCode\QROptions([
-                                            'version'      => 5,
                                             'outputType'   => \chillerlan\QRCode\QRCode::OUTPUT_IMAGE_PNG,
                                             'eccLevel'     => \chillerlan\QRCode\QRCode::ECC_L,
                                             'scale'        => 5,
                                             'imageBase64'  => false,
                                         ]);
-                                        
-                                        $verify_url = "http://" . $_SERVER['HTTP_HOST'] . "/alatbantu/pages/verify_surat.php?no_urut=" . urlencode($no_urut);
+
                                         $qrcode = new \chillerlan\QRCode\QRCode($options);
                                         $qr_img_path = sys_get_temp_dir() . '/qr_' . $no_urut . '.png';
-                                        $qrcode->render($verify_url, $qr_img_path);
+                                        $qrcode->render($qr_content_text, $qr_img_path);
                                         
                                         // 2. Manipulasi PDF
                                         $pdf = new \setasign\Fpdi\Fpdi();
@@ -289,11 +313,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                 // Ukuran QR code approx 25x25 mm
                                                 $qr_size = 25;
                                                 $pdf->Image($qr_img_path, $x_mm, $y_mm, $qr_size, $qr_size, 'PNG');
-                                                
-                                                // Tambah teks kecil di bawah QR Code
-                                                $pdf->SetFont('Arial', '', 8);
-                                                $pdf->SetXY($x_mm, $y_mm + $qr_size);
-                                                $pdf->Cell($qr_size, 4, 'Signed Digitally', 0, 0, 'C');
                                             }
                                         }
                                         
@@ -423,6 +442,94 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     if ($stmt_up->execute()) {
                         $success_msg = "Data Surat Keluar $no_urut berhasil diperbarui.";
+
+                        // Jika Level 3 sudah disetujui, perbarui stempel QR Code pada PDF dengan koordinat baru
+                        $res_l3 = $koneksi->query("SELECT status_disposisi, pengesahan FROM surat_keluar_disposisi_level WHERE no_urut = '$no_urut' AND level = 3");
+                        if ($res_l3 && $row_l3 = $res_l3->fetch_assoc()) {
+                            if ($row_l3['status_disposisi'] === 'Sudah Disposisi' && $row_l3['pengesahan'] === 'true') {
+                                require_once __DIR__ . '/../vendor/autoload.php';
+                                $res_sk = $koneksi->query("SELECT file_url, qr_x, qr_y FROM surat_keluar WHERE no_urut = '$no_urut'");
+                                if ($res_sk && $row_sk = $res_sk->fetch_assoc()) {
+                                    $pdf_path = __DIR__ . '/../' . $row_sk['file_url'];
+                                    if (!empty($row_sk['file_url']) && file_exists($pdf_path) && strtolower(pathinfo($pdf_path, PATHINFO_EXTENSION)) === 'pdf') {
+                                        try {
+                                            // Construct QR Code payload text
+                                            $nama_petugas = 'Penandatangan / Direktur';
+                                            $res_l3_peg = $koneksi->query("SELECT p.nama FROM surat_keluar_disposisi_level d LEFT JOIN pegawai p ON p.nik = d.nik WHERE d.no_urut = '$no_urut' AND d.level = 3 LIMIT 1");
+                                            if ($res_l3_peg && $r_l3_peg = $res_l3_peg->fetch_assoc()) {
+                                                if (!empty($r_l3_peg['nama'])) {
+                                                    $nama_petugas = $r_l3_peg['nama'];
+                                                }
+                                            }
+
+                                            $nama_instansi = 'RSUD PRINGSEWU';
+                                            $alamat_instansi = 'Jl. Kesehatan No. 1 Pringsewu';
+                                            $res_set = $koneksi->query("SELECT nama_instansi, alamat_instansi, kabupaten FROM setting LIMIT 1");
+                                            if ($res_set && $r_set = $res_set->fetch_assoc()) {
+                                                if (!empty($r_set['nama_instansi'])) {
+                                                    $nama_instansi = $r_set['nama_instansi'];
+                                                }
+                                                if (!empty($r_set['alamat_instansi'])) {
+                                                    $alamat_instansi = $r_set['alamat_instansi'];
+                                                    if (!empty($r_set['kabupaten'])) {
+                                                        $alamat_instansi .= ', ' . $r_set['kabupaten'];
+                                                    }
+                                                }
+                                            }
+
+                                            $tgl_surat_val = !empty($row_sk['tgl_surat']) ? $row_sk['tgl_surat'] : date('Y-m-d');
+                                            $tgl_surat_fmt = date('d F Y', strtotime($tgl_surat_val));
+                                            $qr_content_text = "Ditandatangani secara digital oleh '$nama_petugas' pada tanggal '$tgl_surat_fmt' di '$nama_instansi' alamat '$alamat_instansi'";
+                                            $options = new \chillerlan\QRCode\QROptions([
+                                                'outputType'   => \chillerlan\QRCode\QRCode::OUTPUT_IMAGE_PNG,
+                                                'eccLevel'     => \chillerlan\QRCode\QRCode::ECC_L,
+                                                'scale'        => 5,
+                                                'imageBase64'  => false,
+                                            ]);
+
+                                            $qrcode = new \chillerlan\QRCode\QRCode($options);
+                                            $qr_img_path = sys_get_temp_dir() . '/qr_' . $no_urut . '.png';
+                                            $qrcode->render($qr_content_text, $qr_img_path);
+                                            
+                                            $pdf = new \setasign\Fpdi\Fpdi();
+                                            $pageCount = $pdf->setSourceFile($pdf_path);
+                                            
+                                            for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
+                                                $templateId = $pdf->importPage($pageNo);
+                                                $size = $pdf->getTemplateSize($templateId);
+                                                
+                                                $orientation = $size['width'] > $size['height'] ? 'L' : 'P';
+                                                $pdf->AddPage($orientation, [$size['width'], $size['height']]);
+                                                $pdf->useTemplate($templateId);
+                                                
+                                                if ($pageNo === $pageCount) {
+                                                    $qr_x_pct = $row_sk['qr_x'] !== null ? (float)$row_sk['qr_x'] : 70;
+                                                    $qr_y_pct = $row_sk['qr_y'] !== null ? (float)$row_sk['qr_y'] : 80;
+                                                    
+                                                    $x_mm = ($qr_x_pct / 100) * $size['width'];
+                                                    $y_mm = ($qr_y_pct / 100) * $size['height'];
+                                                    
+                                                    $qr_size = 25;
+                                                    $pdf->Image($qr_img_path, $x_mm, $y_mm, $qr_size, $qr_size, 'PNG');
+                                                }
+                                            }
+                                            
+                                            $new_filename = 'SuratKeluar_' . $no_urut . '_' . time() . '_signed.pdf';
+                                            $target_path = __DIR__ . '/upload/' . $new_filename;
+                                            $pdf->Output('F', $target_path);
+                                            
+                                            $new_file_url = 'pages/upload/' . $new_filename;
+                                            $koneksi->query("UPDATE surat_keluar SET file_url = '$new_file_url' WHERE no_urut = '$no_urut'");
+                                            
+                                            if (file_exists($qr_img_path)) unlink($qr_img_path);
+                                            $success_msg .= " Posisi QR Code telah diperbarui pada PDF.";
+                                        } catch (Exception $e) {
+                                            $error_msg = "Gagal memperbarui posisi QR Code: " . $e->getMessage();
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         $error_msg = "Gagal memperbarui surat keluar: " . $koneksi->error;
                     }
@@ -486,6 +593,69 @@ if ($res_surat) {
     }
 }
 ?>
+<!-- jQuery & Select2 (CDN) for Searchable Level Dropdowns -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<style>
+/* Modern Select2 Styling for Level Dropdowns */
+.select2-container {
+    width: 100% !important;
+}
+.select2-container--default .select2-selection--single {
+    height: 42px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 10px !important;
+    padding: 6px 12px !important;
+    background-color: #ffffff !important;
+    display: flex !important;
+    align-items: center !important;
+    transition: all 0.2s ease-in-out !important;
+}
+.select2-container--default .select2-selection--single:focus,
+.select2-container--default.select2-container--open .select2-selection--single {
+    border-color: #0284c7 !important;
+    box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15) !important;
+    outline: none !important;
+}
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    color: #0f172a !important;
+    font-size: 14px !important;
+    padding-left: 0 !important;
+    line-height: normal !important;
+}
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 40px !important;
+    right: 8px !important;
+}
+.select2-dropdown {
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15) !important;
+    z-index: 999999 !important;
+    overflow: hidden !important;
+}
+.select2-search--dropdown {
+    padding: 8px 10px !important;
+    background: #f8fafc !important;
+}
+.select2-search__field {
+    border-radius: 8px !important;
+    border: 1px solid #cbd5e1 !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    outline: none !important;
+}
+.select2-results__option {
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+}
+.select2-container--default .select2-results__option--highlighted[aria-selected] {
+    background-color: #0284c7 !important;
+    color: #ffffff !important;
+}
+</style>
 
 <div class="content-card">
     <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;">
@@ -499,7 +669,7 @@ if ($res_surat) {
             </p>
         </div>
         
-        <button type="button" class="btn btn-primary" onclick="openModal('addSuratKeluarModal')" style="display: flex; align-items: center; gap: 8px; background: #0284c7; border-color: #0284c7;">
+        <button type="button" class="btn btn-primary" onclick="openModal('addSuratKeluarModal'); setTimeout(initSelect2Level, 50);" style="display: flex; align-items: center; gap: 8px; background: #0284c7; border-color: #0284c7;">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
             Buat Surat Keluar Baru
         </button>
@@ -763,8 +933,8 @@ if ($res_surat) {
                     <div style="display: flex; flex-direction: column; gap: 12px;">
                         <div>
                             <label class="form-label" style="color: #0284c7; font-weight: 700;">Level 1 (Konseptor / Ka.Bag) *</label>
-                            <select name="level1_nik" class="form-control" required style="background: #fff;">
-                                <option value="">-- Pilih Pegawai Level 1 --</option>
+                            <select id="select_level1_nik" name="level1_nik" class="form-control select2-pegawai-level" required style="background: #fff; width: 100%;">
+                                <option value="">-- Cari Nama / NIK Pegawai Level 1 --</option>
                                 <?php foreach ($pegawai_list as $p): ?>
                                     <option value="<?= $p['nik'] ?>"><?= htmlspecialchars($p['nama']) ?> (<?= htmlspecialchars($p['jbtn'] ?: 'Pegawai') ?> - NIK: <?= $p['nik'] ?>)</option>
                                 <?php endforeach; ?>
@@ -773,8 +943,8 @@ if ($res_surat) {
 
                         <div>
                             <label class="form-label" style="color: #0284c7; font-weight: 700;">Level 2 (Pemeriksa / Wadir) *</label>
-                            <select name="level2_nik" class="form-control" required style="background: #fff;">
-                                <option value="">-- Pilih Pegawai Level 2 --</option>
+                            <select id="select_level2_nik" name="level2_nik" class="form-control select2-pegawai-level" required style="background: #fff; width: 100%;">
+                                <option value="">-- Cari Nama / NIK Pegawai Level 2 --</option>
                                 <?php foreach ($pegawai_list as $p): ?>
                                     <option value="<?= $p['nik'] ?>"><?= htmlspecialchars($p['nama']) ?> (<?= htmlspecialchars($p['jbtn'] ?: 'Pegawai') ?> - NIK: <?= $p['nik'] ?>)</option>
                                 <?php endforeach; ?>
@@ -783,8 +953,8 @@ if ($res_surat) {
 
                         <div>
                             <label class="form-label" style="color: #0284c7; font-weight: 700;">Level 3 (Penandatangan / Direktur) *</label>
-                            <select name="level3_nik" class="form-control" required style="background: #fff;">
-                                <option value="">-- Pilih Pegawai Level 3 --</option>
+                            <select id="select_level3_nik" name="level3_nik" class="form-control select2-pegawai-level" required style="background: #fff; width: 100%;">
+                                <option value="">-- Cari Nama / NIK Pegawai Level 3 --</option>
                                 <?php foreach ($pegawai_list as $p): ?>
                                     <option value="<?= $p['nik'] ?>"><?= htmlspecialchars($p['nama']) ?> (<?= htmlspecialchars($p['jbtn'] ?: 'Pegawai') ?> - NIK: <?= $p['nik'] ?>)</option>
                                 <?php endforeach; ?>
@@ -979,6 +1149,21 @@ if ($res_surat) {
 const LOGGED_NIK     = <?= json_encode($nik_user) ?>;
 const IS_ADMIN       = <?= json_encode($is_admin) ?>;
 const GENERATED_MAP  = <?= json_encode($generated_map) ?>;
+
+$(document).ready(function() {
+    initSelect2Level();
+});
+
+function initSelect2Level() {
+    if (typeof $.fn !== 'undefined' && typeof $.fn.select2 !== 'undefined') {
+        $('.select2-pegawai-level').select2({
+            dropdownParent: $('#addSuratKeluarModal .modal-content'),
+            width: '100%',
+            placeholder: '-- Cari Nama / NIK Pegawai --',
+            allowClear: true
+        });
+    }
+}
 
 function autoGenerateNoSurat() {
     const selectElem = document.getElementById('select_jenis_surat');
