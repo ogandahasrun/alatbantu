@@ -53,6 +53,13 @@ function buildGeneratedNoSuratByKlasifikasi($koneksi, $kd_klasifikasi, $tgl_sura
     $no_tahunan = str_pad($next_num, 3, '0', STR_PAD_LEFT);
 
     $kode_org = 'RSBW';
+    $res_set = $koneksi->query("SELECT nama_instansi FROM setting LIMIT 1");
+    if ($res_set && $r_set = $res_set->fetch_assoc()) {
+        $nama_inst = strtoupper(trim($r_set['nama_instansi'] ?? ''));
+        if (strpos($nama_inst, 'DINAS KESEHATAN') !== false || strpos($nama_inst, 'DINKES') !== false || strpos($nama_inst, 'DISKES') !== false) {
+            $kode_org = 'DINKES';
+        }
+    }
 
     if ($kd_klasifikasi === 'INT') {
         // Surat Internal: 083/INT/RSBW/VII/2026
@@ -145,8 +152,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if (empty($error_msg)) {
-                $kd_lemari = 'SA001'; $kd_rak = 'SR001'; $kd_map = 'SM001'; $kd_ruang = 'SG001';
-                $kd_sifat = 'SF001'; $kd_balas = 'SB002'; $kd_status = 'SS003';
+                // Helper untuk menjamin ketersediaan FK valid di tabel master Khanza
+                $get_valid_kd = function($table, $fallback_kd, $fallback_name, $name_column = 'nama') use ($koneksi) {
+                    $r = $koneksi->query("SELECT kd FROM `$table` LIMIT 1");
+                    if ($r && $row = $r->fetch_assoc()) {
+                        return $row['kd'];
+                    }
+                    // Jika tabel master kosong, buatkan entry default agar Foreign Key tidak error
+                    $stmt = $koneksi->prepare("INSERT IGNORE INTO `$table` (kd, `$name_column`) VALUES (?, ?)");
+                    if ($stmt) {
+                        $stmt->bind_param("ss", $fallback_kd, $fallback_name);
+                        $stmt->execute();
+                        $stmt->close();
+                    }
+                    return $fallback_kd;
+                };
+
+                $kd_lemari = $get_valid_kd('surat_lemari', 'SA001', 'Surat Intern', 'lemari');
+                $kd_rak    = $get_valid_kd('surat_rak', 'SR001', 'Intern keluar', 'rak');
+                $kd_map    = $get_valid_kd('surat_map', 'SM001', 'A - C', 'map');
+                $kd_ruang  = $get_valid_kd('surat_ruang', 'SG001', 'RUANG SEKRETARIAT', 'ruang');
+                $kd_sifat  = $get_valid_kd('surat_sifat', 'SF001', 'RAHASIA', 'sifat');
+                $kd_balas  = $get_valid_kd('surat_balas', 'SB002', 'BELUM DIBALAS', 'balas');
+                $kd_status = $get_valid_kd('surat_status', 'SS003', 'BELUM DIBALAS', 'status');
+
                 $lampiran = '-'; $tembusan = '-'; $tgl_deadline = $tgl_kirim;
 
                 $stmt_ins = $koneksi->prepare("INSERT INTO surat_keluar 
