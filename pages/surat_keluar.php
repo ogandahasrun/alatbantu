@@ -8,6 +8,19 @@ if (file_exists($autoload_file)) {
     require_once $autoload_file;
 }
 
+// Fallback Autoloader khusus chillerlan untuk server Linux/Live
+spl_autoload_register(function ($class) {
+    if (strpos($class, 'chillerlan\\QRCode\\') === 0) {
+        $rel = str_replace(['chillerlan\\QRCode\\', '\\'], ['', '/'], $class);
+        $file = dirname(__DIR__) . '/vendor/chillerlan/php-qrcode/src/' . $rel . '.php';
+        if (file_exists($file)) require_once $file;
+    } elseif (strpos($class, 'chillerlan\\Settings\\') === 0) {
+        $rel = str_replace(['chillerlan\\Settings\\', '\\'], ['', '/'], $class);
+        $file = dirname(__DIR__) . '/vendor/chillerlan/php-settings-container/src/' . $rel . '.php';
+        if (file_exists($file)) require_once $file;
+    }
+});
+
 $nik_user = $_SESSION['username'];
 $is_admin = isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true;
 
@@ -311,16 +324,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         $tgl_surat_val = !empty($row_sk['tgl_surat']) ? $row_sk['tgl_surat'] : date('Y-m-d');
                                         $tgl_surat_fmt = date('d F Y', strtotime($tgl_surat_val));
                                         $qr_content_text = "Ditandatangani secara digital oleh '$nama_petugas' pada tanggal '$tgl_surat_fmt' di '$nama_instansi' alamat '$alamat_instansi'";
-                                        $options = new \chillerlan\QRCode\QROptions([
-                                            'outputType'   => \chillerlan\QRCode\QRCode::OUTPUT_IMAGE_PNG,
-                                            'eccLevel'     => \chillerlan\QRCode\QRCode::ECC_L,
-                                            'scale'        => 5,
-                                            'imageBase64'  => false,
-                                        ]);
-
-                                        $qrcode = new \chillerlan\QRCode\QRCode($options);
                                         $qr_img_path = sys_get_temp_dir() . '/qr_' . $no_urut . '.png';
-                                        $qrcode->render($qr_content_text, $qr_img_path);
+
+                                        if (class_exists('chillerlan\\QRCode\\QRCode') && class_exists('chillerlan\\QRCode\\QROptions')) {
+                                            $options = new \chillerlan\QRCode\QROptions([
+                                                'outputType'   => \chillerlan\QRCode\QRCode::OUTPUT_IMAGE_PNG,
+                                                'eccLevel'     => \chillerlan\QRCode\QRCode::ECC_L,
+                                                'scale'        => 5,
+                                                'imageBase64'  => false,
+                                            ]);
+                                            $qrcode = new \chillerlan\QRCode\QRCode($options);
+                                            $qrcode->render($qr_content_text, $qr_img_path);
+                                        } else {
+                                            // Fallback otomatis jika folder vendor/chillerlan tidak ter-upload lengkap di server Live
+                                            $qr_url = 'https://quickchart.io/qr?size=300&text=' . urlencode($qr_content_text);
+                                            $qr_data = @file_get_contents($qr_url);
+                                            if ($qr_data) {
+                                                file_put_contents($qr_img_path, $qr_data);
+                                            }
+                                        }
                                         
                                         // 2. Manipulasi PDF
                                         $pdf = new \setasign\Fpdi\Fpdi();
