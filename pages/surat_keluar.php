@@ -3,6 +3,11 @@ if (!defined('host')) {
     exit('No direct script access allowed');
 }
 
+$autoload_file = dirname(__DIR__) . '/vendor/autoload.php';
+if (file_exists($autoload_file)) {
+    require_once $autoload_file;
+}
+
 $nik_user = $_SESSION['username'];
 $is_admin = isset($_SESSION['is_admin']) && $_SESSION['is_admin'] === true;
 
