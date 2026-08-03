@@ -134,6 +134,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (empty($level1_nik) || empty($level2_nik) || empty($level3_nik)) {
             $error_msg = "Harap tentukan penanggung jawab disposisi untuk ketiga level (Level 1, Level 2, dan Level 3)!";
         } else {
+            // DETEKSI & PENYESUAIAN NOMOR ATOMIK UNTUK MULTI-USER BERSAMAAN
+            $original_no_surat = $no_surat;
+            $was_number_adjusted = false;
+
+            $check_exist = $koneksi->query("SELECT id FROM surat_keluar WHERE no_surat = '" . $koneksi->real_escape_string($no_surat) . "' LIMIT 1");
+            if ($check_exist && $check_exist->num_rows > 0) {
+                // Nomor sudah terpakai oleh petugas lain! Regenerate nomor urut terbaru otomatis
+                $kd_k_esc = $koneksi->real_escape_string($kd_klasifikasi);
+                $time_s   = strtotime($tgl_surat);
+                $y_num    = (int)date('Y', $time_s);
+                $m_num    = (int)date('m', $time_s);
+
+                $res_max = $koneksi->query("SELECT MAX(CAST(SUBSTRING_INDEX(no_surat, '/', 1) AS UNSIGNED)) as max_num FROM surat_keluar WHERE YEAR(tgl_surat) = $y_num AND (kd_klasifikasi = '$kd_k_esc' OR no_surat LIKE '%/$kd_k_esc/%')");
+                $next_n = 1;
+                if ($res_max && $r_m = $res_max->fetch_assoc()) {
+                    if ($r_m['max_num'] > 0) {
+                        $next_n = (int)$r_m['max_num'] + 1;
+                    }
+                }
+                $koneksi->query("UPDATE surat_sub_klasifikasi SET no_tahunan = $next_n, bulan = $m_num, tahun = $y_num WHERE kd_klasifikasi = '$kd_k_esc' OR kd = '$kd_k_esc'");
+                $no_surat = buildGeneratedNoSuratByKlasifikasi($koneksi, $kd_klasifikasi, $tgl_surat);
+                $was_number_adjusted = true;
+            }
+
             // Generate nomor urut transaksi otomatis (SK + Ymd + 3 digit counter)
             $prefix = 'SK' . date('Ymd');
             $res_no = $koneksi->query("SELECT MAX(no_urut) as max_no FROM surat_keluar WHERE no_urut LIKE '$prefix%'");
@@ -237,6 +261,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
 
                         $success_msg = "Surat Keluar <strong>" . htmlspecialchars($no_surat) . "</strong> (" . $no_urut . ") berhasil disimpan dan alur persetujuan 3 level telah dialokasikan.";
+                        if ($was_number_adjusted) {
+                            $success_msg .= "<br>⚠️ <small><em>Catatan: Nomor surat otomatis disesuaikan dari <strong>" . htmlspecialchars($original_no_surat) . "</strong> menjadi <strong>" . htmlspecialchars($no_surat) . "</strong> karena nomor sebelumnya baru saja digunakan oleh petugas lain.</em></small>";
+                        }
                     } else {
                         $error_msg = "Gagal menyimpan surat keluar: " . $koneksi->error;
                     }
@@ -271,6 +298,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $can_submit = true;
                 }
                 $stmt_chk->close();
+            }
+
+            // PROTEKSI PENGEDITAN: Cek apakah Level 3 sudah pernah melakukan pengesahan/disposisi sebelumnya
+            $is_l3_locked = false;
+            $stmt_l3_chk = $koneksi->prepare("SELECT status_disposisi, pengesahan FROM surat_keluar_disposisi_level WHERE no_urut = ? AND level = 3 LIMIT 1");
+            if ($stmt_l3_chk) {
+                $stmt_l3_chk->bind_param("s", $no_urut);
+                $stmt_l3_chk->execute();
+                $res_l3_c = $stmt_l3_chk->get_result();
+                if ($row_l3_c = $res_l3_c->fetch_assoc()) {
+                    if ($row_l3_c['status_disposisi'] === 'Sudah Disposisi' || $row_l3_chk['pengesahan'] === 'true') {
+                        $is_l3_locked = true;
+                    }
+                }
+                $stmt_l3_chk->close();
+            }
+
+            if ($is_l3_locked && !$is_admin) {
+                $can_submit = false;
+                $error_msg = "Disposisi Ditolak: Surat Keluar ini telah TERKUNCI resmi karena telah disahkan & ditandatangani oleh Level 3 (Direktur). Perubahan disposisi tidak dapat dilakukan.";
             }
 
             if ($can_submit) {
@@ -431,8 +478,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt_chk->close();
         }
 
+        // PROTEKSI PENGEDITAN SURAT: Cek apakah Level 3 sudah approve / disposisi
+        $is_l3_locked_edit = false;
+        $stmt_l3_e = $koneksi->prepare("SELECT status_disposisi, pengesahan FROM surat_keluar_disposisi_level WHERE no_urut = ? AND level = 3 LIMIT 1");
+        if ($stmt_l3_e) {
+            $stmt_l3_e->bind_param("s", $no_urut);
+            $stmt_l3_e->execute();
+            $res_l3_e = $stmt_l3_e->get_result();
+            if ($row_l3_e = $res_l3_e->fetch_assoc()) {
+                if ($row_l3_e['status_disposisi'] === 'Sudah Disposisi' || $row_l3_e['pengesahan'] === 'true') {
+                    $is_l3_locked_edit = true;
+                }
+            }
+            $stmt_l3_e->close();
+        }
+
         if (empty($no_urut) || empty($no_surat) || empty($tujuan) || empty($perihal)) {
             $error_msg = "Nomor Surat, Tujuan, dan Perihal wajib diisi!";
+        } elseif ($is_l3_locked_edit && !$is_admin) {
+            $error_msg = "Pengeditan Ditolak: Surat Keluar ini telah TERKUNCI resmi karena telah disahkan & ditandatangani oleh Level 3 (Direktur).";
         } elseif (!$can_edit) {
             $error_msg = "Akses Ditolak: Hanya Admin atau pembuat surat yang dapat mengedit data ini!";
         } else {
@@ -815,7 +879,17 @@ if ($res_surat) {
                                     }
                                 }
                             }
+                            $is_l3_approved = isset($surat['levels'][3]) && ($surat['levels'][3]['status_disposisi'] === 'Sudah Disposisi' || $surat['levels'][3]['pengesahan'] === 'true');
+                            if ($is_l3_approved && !$is_admin) {
+                                $can_edit = false;
+                            }
                             ?>
+                            <?php if ($is_l3_approved): ?>
+                                <span style="background: #fee2e2; color: #991b1b; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 11px; display: inline-flex; align-items: center; gap: 4px;">
+                                    🔒 FINAL / TERKUNCI
+                                </span>
+                            <?php endif; ?>
+
                             <?php if ($can_edit): ?>
                                 <button type="button" class="btn btn-sm btn-warning" onclick='openEditSKModal(<?= json_encode($surat) ?>)' style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; background: #f59e0b; border-color: #f59e0b; color: white;">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
@@ -1309,7 +1383,17 @@ function openDetailDisposisiSKModal(s) {
 
     // FORM INPUT UNTUK USER JIKA APPLICABLE (OR ADMIN CAN CHOOSE LEVEL)
     const formContainer = document.getElementById('det_sk_form_input_container');
-    if (myAssignedLevel > 0 || IS_ADMIN) {
+    const isL3Done = (s.levels && s.levels[3] && (s.levels[3].status_disposisi === 'Sudah Disposisi' || s.levels[3].pengesahan === 'true'));
+
+    if (isL3Done && !IS_ADMIN) {
+        formContainer.innerHTML = `
+            <div style="background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; border-radius: 12px; padding: 14px; text-align: center; font-size: 13px; font-weight: 700;">
+                🔒 STATUS: FINAL / TERKUNCI<br>
+                <span style="font-weight: 400; font-size: 12px;">Surat Keluar ini telah disahkan & ditandatangani secara digital oleh Level 3 (Direktur). Persetujuan/Disposisi tidak dapat diubah lagi.</span>
+            </div>
+        `;
+        formContainer.style.display = 'block';
+    } else if (myAssignedLevel > 0 || IS_ADMIN) {
         const activeLevel = myAssignedLevel > 0 ? myAssignedLevel : 1;
         document.getElementById('det_sk_my_level_title').innerText = "Level " + activeLevel;
         document.getElementById('form_sk_no_urut').value           = s.no_urut;
