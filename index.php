@@ -295,8 +295,12 @@ if (isset($_GET['ajax_action']) || $_SERVER['REQUEST_METHOD'] === 'POST') {
                     <span>Surat Menyurat</span>
                 </div>
                 <div class="menu-group-items">
+                    <a href="index.php?page=surat_menyurat&sub=semua" class="<?= ($page === 'surat_menyurat' && ($sub === 'semua' || empty($sub))) ? 'active' : '' ?>">
+                        <span>• Daftar Semua Surat</span>
+                    </a>
+
                     <?php if ($has_access_surat_masuk): ?>
-                    <a href="index.php?page=surat_menyurat&sub=surat_masuk" class="<?= ($page === 'surat_masuk' || ($page === 'surat_menyurat' && ($sub === 'surat_masuk' || empty($sub)))) ? 'active' : '' ?>">
+                    <a href="index.php?page=surat_menyurat&sub=surat_masuk" class="<?= ($page === 'surat_masuk' || ($page === 'surat_menyurat' && $sub === 'surat_masuk')) ? 'active' : '' ?>">
                         <span>• Surat Masuk</span>
                     </a>
                     <?php endif; ?>
@@ -472,12 +476,14 @@ if (isset($_GET['ajax_action']) || $_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         echo "<div class='content-card' style='text-align: center; padding: 40px;'><div style='color: #ef4444; font-size: 48px; margin-bottom: 16px;'>🚫</div><h2>Akses Ditolak</h2><p class='text-secondary'>Anda tidak memiliki hak akses untuk menu Surat Keluar.</p></div>";
                     }
-                } else {
+                } elseif ($sub === 'surat_masuk') {
                     if ($has_access_surat_masuk) {
                         include 'pages/surat_masuk.php';
                     } else {
                         echo "<div class='content-card' style='text-align: center; padding: 40px;'><div style='color: #ef4444; font-size: 48px; margin-bottom: 16px;'>🚫</div><h2>Akses Ditolak</h2><p class='text-secondary'>Anda tidak memiliki hak akses untuk menu Surat Masuk.</p></div>";
                     }
+                } else {
+                    include 'pages/surat_daftar_semua.php';
                 }
             } else {
                 include "pages/{$page}.php"; 
@@ -505,6 +511,13 @@ if (isset($_GET['ajax_action']) || $_SERVER['REQUEST_METHOD'] === 'POST') {
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                     <span>Profil Saya</span>
                 </a>
+
+                <?php if ($has_access_surat_menyurat): ?>
+                <a href="index.php?page=surat_menyurat&sub=semua" class="drawer-item" onclick="closeDrawerMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                    <span>Daftar Semua Surat</span>
+                </a>
+                <?php endif; ?>
 
                 <?php if ($has_access_surat_masuk): ?>
                 <a href="index.php?page=surat_menyurat&sub=surat_masuk" class="drawer-item" onclick="closeDrawerMenu(event)">
