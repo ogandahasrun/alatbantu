@@ -115,6 +115,10 @@ if (isset($_GET['ajax_action']) || $_SERVER['REQUEST_METHOD'] === 'POST') {
             include 'pages/profil.php';
             exit;
         }
+        if ($page === 'manajemen' && $sub === 'upload_absensi' && isset($_GET['ajax_action'])) {
+            include 'pages/manajemen_upload_absensi.php';
+            exit;
+        }
     }
 }
 ?>
