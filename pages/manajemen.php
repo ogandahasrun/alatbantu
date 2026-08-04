@@ -27,6 +27,8 @@ if ($sub === 'dokter') {
     include 'manajemen_penggajian.php';
 } elseif ($sub === 'rekap_absensi') {
     include 'manajemen_rekap_absensi.php';
+} elseif ($sub === 'upload_absensi') {
+    include 'manajemen_upload_absensi.php';
 } else {
     include 'manajemen_pegawai.php';
 }
