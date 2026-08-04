@@ -157,6 +157,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt_chk->close();
             }
 
+            // PROTEKSI PENGEDITAN: Cek apakah Level 3 sudah pernah melakukan pengesahan/disposisi sebelumnya
+            $is_l3_locked = false;
+            $stmt_l3_chk = $koneksi->prepare("SELECT status_disposisi, pengesahan FROM surat_masuk_disposisi_level WHERE no_urut = ? AND level = 3 LIMIT 1");
+            if ($stmt_l3_chk) {
+                $stmt_l3_chk->bind_param("s", $no_urut);
+                $stmt_l3_chk->execute();
+                $res_l3_c = $stmt_l3_chk->get_result();
+                if ($row_l3_c = $res_l3_c->fetch_assoc()) {
+                    if ($row_l3_c['status_disposisi'] === 'Sudah Disposisi' || $row_l3_c['pengesahan'] === 'true') {
+                        $is_l3_locked = true;
+                    }
+                }
+                $stmt_l3_chk->close();
+            }
+
+            if ($is_l3_locked && !$is_admin) {
+                $can_submit = false;
+                $error_msg = "Disposisi Ditolak: Surat Masuk ini telah TERKUNCI resmi karena telah disahkan oleh Level 3 (Direktur). Perubahan disposisi tidak dapat dilakukan.";
+            }
+
             if ($can_submit) {
                 $now = date('Y-m-d H:i:s');
                 $stmt_up_disp = $koneksi->prepare("UPDATE surat_masuk_disposisi_level 
@@ -732,7 +752,17 @@ function openDetailDisposisiModal(s) {
 
     // FORM INPUT UNTUK USER JIKA APPLICABLE (OR ADMIN CAN CHOOSE LEVEL)
     const formContainer = document.getElementById('det_form_input_container');
-    if (myAssignedLevel > 0 || IS_ADMIN) {
+    const isL3Done = (s.levels && s.levels[3] && (s.levels[3].status_disposisi === 'Sudah Disposisi' || s.levels[3].pengesahan === 'true'));
+
+    if (isL3Done && !IS_ADMIN) {
+        formContainer.innerHTML = `
+            <div style="background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; border-radius: 12px; padding: 14px; text-align: center; font-size: 13px; font-weight: 700;">
+                🔒 STATUS: FINAL / TERKUNCI<br>
+                <span style="font-weight: 400; font-size: 12px;">Surat Masuk ini telah disahkan oleh Level 3 (Direktur). Data disposisi tidak dapat diubah lagi.</span>
+            </div>
+        `;
+        formContainer.style.display = 'block';
+    } else if (myAssignedLevel > 0 || IS_ADMIN) {
         const activeLevel = myAssignedLevel > 0 ? myAssignedLevel : 1;
         document.getElementById('det_my_level_title').innerText = "Level " + activeLevel;
         document.getElementById('form_no_urut').value           = s.no_urut;
