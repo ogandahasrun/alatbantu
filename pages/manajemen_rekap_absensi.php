@@ -26,17 +26,63 @@ if (!isset($user_permissions['manajemen']) || $user_permissions['manajemen'] !==
     die('<div class="content-card"><h3 style="color:red;">Akses Ditolak</h3><p>Anda tidak memiliki izin untuk mengakses halaman Manajemen.</p></div>');
 }
 
-$bulan = $_GET['bulan'] ?? date('m');
-$tahun = $_GET['tahun'] ?? date('Y');
+$tgl_awal = $_GET['tgl_awal'] ?? '';
+$tgl_akhir = $_GET['tgl_akhir'] ?? '';
+
+// Fallback jika tgl_awal/tgl_akhir kosong (misal pemanggilan awal atau link lama)
+if (empty($tgl_awal) || empty($tgl_akhir)) {
+    $bulan_tmp = $_GET['bulan'] ?? date('m');
+    $tahun_tmp = $_GET['tahun'] ?? date('Y');
+    $tgl_awal = date("$tahun_tmp-$bulan_tmp-01");
+    $tgl_akhir = date("Y-m-t", strtotime($tgl_awal));
+} else {
+    $tgl_awal = date('Y-m-d', strtotime($tgl_awal));
+    $tgl_akhir = date('Y-m-d', strtotime($tgl_akhir));
+}
+
 $nik_peg = $_GET['nik_pegawai'] ?? '';
 
-// Daftar bulan untuk filter
-$nama_bulan = [
-    '01' => 'Januari', '02' => 'Februari', '03' => 'Maret',
-    '04' => 'April', '05' => 'Mei', '06' => 'Juni',
-    '07' => 'Juli', '08' => 'Agustus', '09' => 'September',
-    '10' => 'Oktober', '11' => 'November', '12' => 'Desember'
-];
+// Generate array tanggal & daftar (tahun, bulan) unik dalam periode
+$period_dates = [];
+$period_months = [];
+
+try {
+    $start_dt = new DateTime($tgl_awal);
+    $end_dt = new DateTime($tgl_akhir);
+    if ($start_dt > $end_dt) {
+        $tmp = $start_dt;
+        $start_dt = $end_dt;
+        $end_dt = $tmp;
+        $tgl_awal = $start_dt->format('Y-m-d');
+        $tgl_akhir = $end_dt->format('Y-m-d');
+    }
+    
+    $end_dt_inc = (clone $end_dt)->modify('+1 day');
+    $interval = new DateInterval('P1D');
+    $daterange = new DatePeriod($start_dt, $interval, $end_dt_inc);
+    
+    foreach ($daterange as $dt) {
+        $d_str = $dt->format('Y-m-d');
+        $y_str = $dt->format('Y');
+        $m_str = $dt->format('m');
+        $day_num = (int)$dt->format('d');
+        
+        $period_dates[] = [
+            'date' => $d_str,
+            'tahun' => $y_str,
+            'bulan' => $m_str,
+            'day' => $day_num,
+            'col' => 'h' . $day_num,
+            'display_tgl' => $dt->format('d/m/Y')
+        ];
+        
+        $month_key = $y_str . '-' . $m_str;
+        $period_months[$month_key] = ['tahun' => $y_str, 'bulan' => $m_str];
+    }
+} catch (Exception $e) {
+    $tgl_awal = date('Y-m-01');
+    $tgl_akhir = date('Y-m-t');
+}
 
 // Ambil info pegawai yang dipilih jika ada
 $peg_id = 0;
@@ -91,7 +137,7 @@ if ($peg_id > 0) {
     }
 }
 
-// Data Absensi
+// Data Absensi Single Employee
 $absensi = [];
 if (!empty($nik_peg)) {
     $q_absen = "SELECT 
@@ -102,8 +148,7 @@ if (!empty($nik_peg)) {
                 INNER JOIN mapping_absensi ON mapping_absensi.nik = pegawai.nik
                 INNER JOIN detail_absensi ON detail_absensi.id = mapping_absensi.id
                 WHERE pegawai.nik = '" . $koneksi->real_escape_string($nik_peg) . "'
-                  AND YEAR(detail_absensi.tanggal) = '" . $koneksi->real_escape_string($tahun) . "'
-                  AND MONTH(detail_absensi.tanggal) = '" . $koneksi->real_escape_string($bulan) . "'
+                  AND DATE(detail_absensi.tanggal) BETWEEN '" . $koneksi->real_escape_string($tgl_awal) . "' AND '" . $koneksi->real_escape_string($tgl_akhir) . "'
                 GROUP BY DATE(detail_absensi.tanggal)";
     $res_absen = $koneksi->query($q_absen);
     if ($res_absen) {
@@ -113,18 +158,20 @@ if (!empty($nik_peg)) {
     }
 }
 
-// Data Jadwal Shift
+// Data Jadwal Shift Single Employee (Per bulan dalam periode)
 $jadwal = [];
-if ($peg_id > 0) {
-    $q_jadwal = $koneksi->prepare("SELECT * FROM jadwal_pegawai WHERE id = ? AND tahun = ? AND bulan = ? LIMIT 1");
-    if ($q_jadwal) {
-        $q_jadwal->bind_param("iss", $peg_id, $tahun, $bulan);
-        $q_jadwal->execute();
-        $res_jadwal = $q_jadwal->get_result();
-        if ($row_jadwal = $res_jadwal->fetch_assoc()) {
-            $jadwal = $row_jadwal;
+if ($peg_id > 0 && !empty($period_months)) {
+    $where_months = [];
+    foreach ($period_months as $pm) {
+        $where_months[] = "(tahun = '" . $koneksi->real_escape_string($pm['tahun']) . "' AND bulan = '" . $koneksi->real_escape_string($pm['bulan']) . "')";
+    }
+    $str_months = implode(' OR ', $where_months);
+    $q_jadwal = "SELECT * FROM jadwal_pegawai WHERE id = " . (int)$peg_id . " AND ($str_months)";
+    $res_jadwal = $koneksi->query($q_jadwal);
+    if ($res_jadwal) {
+        while ($row_j = $res_jadwal->fetch_assoc()) {
+            $jadwal[$row_j['tahun']][$row_j['bulan']] = $row_j;
         }
-        $q_jadwal->close();
     }
 }
 ?>
@@ -148,31 +195,19 @@ if ($peg_id > 0) {
         <input type="hidden" name="sub" value="rekap_absensi">
         
         <div>
-            <label class="form-label">Bulan</label>
-            <select name="bulan" class="form-control" style="width: 150px;">
-                <?php foreach ($nama_bulan as $num => $nama): ?>
-                    <option value="<?= $num ?>" <?= $bulan === $num ? 'selected' : '' ?>><?= $nama ?></option>
-                <?php endforeach; ?>
-            </select>
+            <label class="form-label">Tgl. Awal Periode</label>
+            <input type="date" name="tgl_awal" class="form-control" value="<?= htmlspecialchars($tgl_awal) ?>" required style="width: 160px;">
         </div>
 
         <div>
-            <label class="form-label">Tahun</label>
-            <select name="tahun" class="form-control" style="width: 120px;">
-                <?php 
-                $start_year = 2020;
-                $end_year = date('Y') + 1;
-                for ($y = $end_year; $y >= $start_year; $y--): 
-                ?>
-                    <option value="<?= $y ?>" <?= (string)$tahun === (string)$y ? 'selected' : '' ?>><?= $y ?></option>
-                <?php endfor; ?>
-            </select>
+            <label class="form-label">Tgl. Akhir Periode</label>
+            <input type="date" name="tgl_akhir" class="form-control" value="<?= htmlspecialchars($tgl_akhir) ?>" required style="width: 160px;">
         </div>
 
-        <div class="autocomplete-container" style="flex: 1; min-width: 250px;">
-            <label class="form-label">Pegawai</label>
-            <input type="text" id="search_pegawai" class="form-control" placeholder="Ketik nama atau NIK pegawai..." autocomplete="off" oninput="suggestPegawai(this.value)" value="<?= htmlspecialchars($nik_peg . ($peg_nama ? ' - '.$peg_nama : '')) ?>">
-            <input type="hidden" id="selected_nik" name="nik_pegawai" value="<?= htmlspecialchars($nik_peg) ?>" required>
+        <div class="autocomplete-container" style="flex: 1; min-width: 230px;">
+            <label class="form-label">Pegawai (Opsional)</label>
+            <input type="text" id="search_pegawai" class="form-control" placeholder="Ketik nama / NIK atau kosongkan..." autocomplete="off" oninput="suggestPegawai(this.value)" value="<?= htmlspecialchars($nik_peg . ($peg_nama ? ' - '.$peg_nama : '')) ?>">
+            <input type="hidden" id="selected_nik" name="nik_pegawai" value="<?= htmlspecialchars($nik_peg) ?>">
             <div id="pegawai-suggestions" class="autocomplete-suggestions" style="display: none;"></div>
         </div>
 
@@ -255,20 +290,25 @@ if ($peg_id > 0) {
 
         $rekap_data = [];
         if (!empty($peg_ids)) {
-            // 1. Fetch jadwal for these employees
+            // 1. Fetch jadwal for these employees across period months
             $id_list = implode(',', $peg_ids);
-            $q_jadwal = "SELECT * FROM jadwal_pegawai WHERE id IN ($id_list) AND tahun = ? AND bulan = ?";
-            $stmt_j = $koneksi->prepare($q_jadwal);
-            $stmt_j->bind_param("ss", $tahun, $bulan);
-            $stmt_j->execute();
-            $res_jadwal = $stmt_j->get_result();
             $jadwal_all = [];
-            while($row = $res_jadwal->fetch_assoc()) {
-                $jadwal_all[$row['id']] = $row;
+            if (!empty($period_months)) {
+                $where_months = [];
+                foreach ($period_months as $pm) {
+                    $where_months[] = "(tahun = '" . $koneksi->real_escape_string($pm['tahun']) . "' AND bulan = '" . $koneksi->real_escape_string($pm['bulan']) . "')";
+                }
+                $str_months = implode(' OR ', $where_months);
+                $q_jadwal = "SELECT * FROM jadwal_pegawai WHERE id IN ($id_list) AND ($str_months)";
+                $res_j = $koneksi->query($q_jadwal);
+                if ($res_j) {
+                    while ($row = $res_j->fetch_assoc()) {
+                        $jadwal_all[$row['id']][$row['tahun']][$row['bulan']] = $row;
+                    }
+                }
             }
-            $stmt_j->close();
             
-            // 2. Fetch absensi for these employees
+            // 2. Fetch absensi for these employees within date range
             $nik_list = implode(',', $peg_niks);
             $q_absen = "SELECT 
                             pegawai.id,
@@ -279,23 +319,18 @@ if ($peg_id > 0) {
                         INNER JOIN mapping_absensi ON mapping_absensi.nik = pegawai.nik
                         INNER JOIN detail_absensi ON detail_absensi.id = mapping_absensi.id
                         WHERE pegawai.nik IN ($nik_list)
-                          AND YEAR(detail_absensi.tanggal) = ?
-                          AND MONTH(detail_absensi.tanggal) = ?
+                          AND DATE(detail_absensi.tanggal) BETWEEN '$tgl_awal' AND '$tgl_akhir'
                         GROUP BY pegawai.id, DATE(detail_absensi.tanggal)";
-            $stmt_a = $koneksi->prepare($q_absen);
-            $stmt_a->bind_param("ss", $tahun, $bulan);
-            $stmt_a->execute();
-            $res_absen = $stmt_a->get_result();
+            $res_absen = $koneksi->query($q_absen);
             $absen_all = [];
-            while($row = $res_absen->fetch_assoc()) {
-                $absen_all[$row['id']][$row['tgl']] = $row;
+            if ($res_absen) {
+                while ($row = $res_absen->fetch_assoc()) {
+                    $absen_all[$row['id']][$row['tgl']] = $row;
+                }
             }
-            $stmt_a->close();
             
-            // 3. Process the logic for each employee
-            $days_in_month = cal_days_in_month(CAL_GREGORIAN, (int)$bulan, (int)$tahun);
-            
-            foreach($pegawai_list as $p) {
+            // 3. Process the logic for each employee across $period_dates
+            foreach ($pegawai_list as $p) {
                 $pid = $p['id'];
                 $pdept = $p['departemen'];
                 
@@ -304,15 +339,16 @@ if ($peg_id > 0) {
                 $count_cepat = 0;
                 $count_alfa = 0;
                 
-                $p_jadwal = $jadwal_all[$pid] ?? [];
                 $p_absen = $absen_all[$pid] ?? [];
-                
                 $jam_map = isset($map_jam_jaga[$pdept]) && !empty($map_jam_jaga[$pdept]) ? $map_jam_jaga[$pdept] : $map_jam_fallback;
                 
-                for ($d = 1; $d <= $days_in_month; $d++) {
-                    $date_str = $tahun . '-' . $bulan . '-' . str_pad($d, 2, '0', STR_PAD_LEFT);
-                    $col_h = 'h' . $d;
-                    $shift = $p_jadwal[$col_h] ?? '-';
+                foreach ($period_dates as $pdate) {
+                    $date_str = $pdate['date'];
+                    $y = $pdate['tahun'];
+                    $m = $pdate['bulan'];
+                    $col_h = $pdate['col'];
+                    
+                    $shift = $jadwal_all[$pid][$y][$m][$col_h] ?? '-';
                     if ($shift === '') $shift = '-';
                     
                     $absen_hari_ini = $p_absen[$date_str] ?? null;
@@ -366,8 +402,8 @@ if ($peg_id > 0) {
             <form method="GET" style="display: flex; gap: 10px; width: 100%; max-width: 300px;">
                 <input type="hidden" name="page" value="manajemen">
                 <input type="hidden" name="sub" value="rekap_absensi">
-                <input type="hidden" name="bulan" value="<?= htmlspecialchars($bulan) ?>">
-                <input type="hidden" name="tahun" value="<?= htmlspecialchars($tahun) ?>">
+                <input type="hidden" name="tgl_awal" value="<?= htmlspecialchars($tgl_awal) ?>">
+                <input type="hidden" name="tgl_akhir" value="<?= htmlspecialchars($tgl_akhir) ?>">
                 <input type="hidden" name="limit" value="<?= htmlspecialchars($limit_param) ?>">
                 <input type="text" name="search_list" class="form-control" placeholder="Cari nama / NIK..." value="<?= htmlspecialchars($search_list) ?>">
                 <button type="submit" class="btn btn-secondary">Cari</button>
@@ -402,7 +438,7 @@ if ($peg_id > 0) {
                         <td style="text-align: center; color: #d97706; font-weight: bold;"><?= $rd['cepat'] ?></td>
                         <td style="text-align: center; color: #dc2626; font-weight: bold;"><?= $rd['alfa'] ?></td>
                         <td style="text-align: center;">
-                            <a href="index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&nik_pegawai=<?= urlencode($p['nik']) ?>" class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; text-decoration: none;">Lihat Rekap</a>
+                            <a href="index.php?page=manajemen&sub=rekap_absensi&tgl_awal=<?= $tgl_awal ?>&tgl_akhir=<?= $tgl_akhir ?>&nik_pegawai=<?= urlencode($p['nik']) ?>" class="btn btn-primary" style="padding: 6px 12px; font-size: 12px; text-decoration: none;">Lihat Rekap</a>
                         </td>
                     </tr>
                     <?php endforeach; ?>
@@ -421,7 +457,7 @@ if ($peg_id > 0) {
             <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <label style="font-size: 13px; color: var(--text-secondary); margin: 0;">Tampil:</label>
-                    <select class="form-control" style="width: auto; padding: 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&search_list=<?= urlencode($search_list) ?>&limit=' + this.value + '&p=1'">
+                    <select class="form-control" style="width: auto; padding: 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=rekap_absensi&tgl_awal=<?= $tgl_awal ?>&tgl_akhir=<?= $tgl_akhir ?>&search_list=<?= urlencode($search_list) ?>&limit=' + this.value + '&p=1'">
                         <?php foreach($allowed_limits as $val => $label): ?>
                             <option value="<?= $val ?>" <?= (string)$limit_param === (string)$val ? 'selected' : '' ?>><?= $label ?></option>
                         <?php endforeach; ?>
@@ -430,7 +466,7 @@ if ($peg_id > 0) {
                 
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <label style="font-size: 13px; color: var(--text-secondary); margin: 0;">Ke Halaman:</label>
-                    <select class="form-control" style="width: auto; padding: 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&search_list=<?= urlencode($search_list) ?>&limit=<?= urlencode($limit_param) ?>&p=' + this.value">
+                    <select class="form-control" style="width: auto; padding: 4px 10px; height: 32px; font-size: 13px;" onchange="window.location.href='index.php?page=manajemen&sub=rekap_absensi&tgl_awal=<?= $tgl_awal ?>&tgl_akhir=<?= $tgl_akhir ?>&search_list=<?= urlencode($search_list) ?>&limit=<?= urlencode($limit_param) ?>&p=' + this.value">
                         <?php for ($i = 1; $i <= $total_pages; $i++): ?>
                             <option value="<?= $i ?>" <?= $i == $page_num ? 'selected' : '' ?>><?= $i ?></option>
                         <?php endfor; ?>
@@ -442,7 +478,7 @@ if ($peg_id > 0) {
 
     <?php else: ?>
         <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-            <a href="index.php?page=manajemen&sub=rekap_absensi&bulan=<?= $bulan ?>&tahun=<?= $tahun ?>&limit=<?= urlencode($limit_param) ?>" class="btn btn-secondary" style="text-decoration: none;">&larr; Kembali ke Daftar Pegawai</a>
+            <a href="index.php?page=manajemen&sub=rekap_absensi&tgl_awal=<?= $tgl_awal ?>&tgl_akhir=<?= $tgl_akhir ?>&limit=<?= urlencode($limit_param) ?>" class="btn btn-secondary" style="text-decoration: none;">&larr; Kembali ke Daftar Pegawai</a>
             <button type="button" onclick="copyTableToClipboard('tabelDetailAbsensi')" class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px;">
                 <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
                 Copy to Clipboard
@@ -452,7 +488,7 @@ if ($peg_id > 0) {
             <table class="table-custom" id="tabelDetailAbsensi">
                 <thead>
                     <tr>
-                        <th style="width: 80px;">Tanggal</th>
+                        <th style="width: 110px; text-align: center;">Tanggal</th>
                         <th>Jadwal Shift</th>
                         <th>Scan Masuk</th>
                         <th>Scan Keluar</th>
@@ -461,11 +497,14 @@ if ($peg_id > 0) {
                 </thead>
                 <tbody>
                     <?php 
-                    $days_in_month = cal_days_in_month(CAL_GREGORIAN, (int)$bulan, (int)$tahun);
-                    for ($d = 1; $d <= $days_in_month; $d++): 
-                        $date_str = $tahun . '-' . $bulan . '-' . str_pad($d, 2, '0', STR_PAD_LEFT);
-                        $col_h = 'h' . $d;
-                        $shift_hari_ini = $jadwal[$col_h] ?? '-';
+                    foreach ($period_dates as $pdate): 
+                        $date_str = $pdate['date'];
+                        $y = $pdate['tahun'];
+                        $m = $pdate['bulan'];
+                        $col_h = $pdate['col'];
+                        $display_tgl = $pdate['display_tgl'];
+                        
+                        $shift_hari_ini = $jadwal[$y][$m][$col_h] ?? '-';
                         if ($shift_hari_ini === '') $shift_hari_ini = '-';
                         
                         $data_absen = $absensi[$date_str] ?? null;
@@ -507,7 +546,7 @@ if ($peg_id > 0) {
                         }
                     ?>
                         <tr>
-                            <td style="text-align: center;"><strong><?= $d ?></strong></td>
+                            <td style="text-align: center;"><strong><?= $display_tgl ?></strong></td>
                             <td>
                                 <?php if ($shift_hari_ini !== '-'): ?>
                                     <span class="badge badge-primary"><?= htmlspecialchars($shift_hari_ini) ?></span>
@@ -519,7 +558,7 @@ if ($peg_id > 0) {
                             <td><?= $jam_keluar ?></td>
                             <td style="<?= $keterangan_color ?>"><?= $keterangan ?></td>
                         </tr>
-                    <?php endfor; ?>
+                    <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
