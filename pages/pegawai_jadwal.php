@@ -72,18 +72,40 @@ if ($q_name) {
     $q_name->close();
 }
 
-// Ambil Master Shift dari tabel jam_jaga
+// Ambil Master Shift dari tabel jam_masuk
 $valid_shifts = [];
-$q_shift = $koneksi->query("SELECT DISTINCT shift FROM jam_jaga WHERE shift IS NOT NULL AND shift != '' ORDER BY shift ASC");
+$master_shifts = [];
+$q_shift = $koneksi->query("SELECT shift, jam_masuk, jam_pulang FROM jam_masuk WHERE shift IS NOT NULL AND shift != '' ORDER BY shift ASC");
 if ($q_shift) {
     while ($rs = $q_shift->fetch_assoc()) {
         $valid_shifts[] = $rs['shift'];
+        $master_shifts[] = $rs;
     }
 }
-// Tambahkan fallback shift standar jika jam_jaga kosong
+// Tambahkan fallback shift standar jika jam_masuk kosong
 if (empty($valid_shifts)) {
     $valid_shifts = ['Pagi', 'Pagi2', 'Siang', 'Siang2', 'Malam', 'Malam2', 'Midle Pagi1', 'Midle Siang1', 'Midle Malam1'];
+    $fallback_hours = [
+        'Pagi' => ['07:00:00', '14:00:00'],
+        'Pagi2' => ['08:00:00', '15:00:00'],
+        'Siang' => ['14:00:00', '21:00:00'],
+        'Siang2' => ['15:00:00', '22:00:00'],
+        'Malam' => ['21:00:00', '07:00:00'],
+        'Malam2' => ['22:00:00', '08:00:00'],
+        'Midle Pagi1' => ['09:00:00', '16:00:00'],
+        'Midle Siang1' => ['11:00:00', '18:00:00'],
+        'Midle Malam1' => ['23:00:00', '06:00:00']
+    ];
+    foreach ($valid_shifts as $vs) {
+        $hours = $fallback_hours[$vs] ?? ['00:00:00', '00:00:00'];
+        $master_shifts[] = [
+            'shift' => $vs,
+            'jam_masuk' => $hours[0],
+            'jam_pulang' => $hours[1]
+        ];
+    }
 }
+
 
 // Ambil Daftar Bawahan dari atasan yang dipilih
 $bawahan_list = [];
@@ -422,6 +444,24 @@ $nama_bulan_indo = [
         border: 1px solid #e2e8f0;
         max-height: 70vh;
     }
+    .shift-ref-scroll {
+        position: relative;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: visible;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+        margin-top: 12px;
+        padding-bottom: 6px;
+    }
+    .shift-ref-row {
+        display: inline-flex;
+        flex-wrap: nowrap;
+        gap: 10px;
+        padding: 4px;
+        min-width: 100%;
+    }
     .table-matrix {
         width: 100%;
         border-collapse: separate;
@@ -703,6 +743,28 @@ $nama_bulan_indo = [
             </div>
         </div>
         <?php endif; ?>
+
+        <!-- Referensi Jam Shift (Collapsible) -->
+        <details style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+            <summary style="font-weight: 600; font-size: 13px; color: #475569; cursor: pointer; user-select: none; outline: none; display: flex; align-items: center; gap: 6px;">
+                <span>👁️ Lihat Referensi Waktu &amp; Jam Kerja Shift (Master Shift)</span>
+            </summary>
+            <div class="shift-ref-scroll">
+                <div class="shift-ref-row">
+                    <?php foreach ($master_shifts as $ms): ?>
+                        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; font-size: 11px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); flex: 0 0 140px; min-width: 140px; box-sizing: border-box;">
+                            <strong style="color: #0f172a; font-size: 12px; display: block; margin-bottom: 4px; border-bottom: 1px solid #f1f5f9; padding-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                <?= htmlspecialchars($ms['shift']) ?>
+                            </strong>
+                            <div style="color: #475569; font-family: monospace; font-size: 11px; line-height: 1.4; white-space: nowrap;">
+                                Masuk  : <?= date('H:i', strtotime($ms['jam_masuk'])) ?><br>
+                                Pulang : <?= date('H:i', strtotime($ms['jam_pulang'])) ?>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+        </details>
 
         <!-- Form & Table Matrix -->
         <form method="POST" action="index.php?page=pegawai&sub=jadwal&tahun=<?= $tahun ?>&bulan=<?= $bulan ?>&nik_atasan=<?= urlencode($selected_atasan_nik) ?>" id="jadwalForm">
